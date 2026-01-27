@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<backup-rules>
+    <full-backup-content>
+        <!-- For more info, see https://developer.android.com/guide/topics/data/autobackup -->
+    </full-backup-content>
+</backup-rules>

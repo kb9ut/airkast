@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Android/Gradle
+*.iml
+.gradle/
+local.properties
+.idea/
+*.hprof
+
+# Build outputs
+build/
+app/build/
+
+# APK/XAPK files (keep radiko reference file if needed)
+*.apk
+*.xapk
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# IDE
+.vscode/
+*.sublime-*
+
+# Kotlin
+.kotlin/
