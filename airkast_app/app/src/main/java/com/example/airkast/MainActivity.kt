@@ -12,9 +12,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.media3.common.util.UnstableApi
@@ -75,59 +77,91 @@ fun MainApp(viewModel: MainViewModel) {
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            Column {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .windowInsetsTopHeight(WindowInsets.statusBars)
-                        .background(MaterialTheme.colorScheme.primary)
-                )
-                Surface(color = MaterialTheme.colorScheme.surface) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TabRow(
-                            selectedTabIndex = tabIndex,
-                            modifier = Modifier.weight(1f),
-                            divider = {}
-                        ) {
-                            tabs.forEachIndexed { index, title ->
-                                Tab(
-                                    selected = tabIndex == index,
-                                    onClick = { tabIndex = index },
-                                    text = { Text(text = title) }
-                                )
-                            }
-                        }
-                        
-                        var menuExpanded by remember { mutableStateOf(false) }
-                        Box {
-                            IconButton(onClick = { menuExpanded = true }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "メニュー")
-                            }
-                            DropdownMenu(
-                                expanded = menuExpanded,
-                                onDismissRequest = { menuExpanded = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("ライセンス情報") },
-                                    onClick = {
-                                        menuExpanded = false
-                                        context.startActivity(Intent(context, OssLicensesMenuActivity::class.java))
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-                HorizontalDivider() // TabRowの下に境界線を引く
-            }
+            // ステータスバーの背景のみ
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
         },
         bottomBar = {
             Column {
-                HorizontalDivider()
+                // PlayerBar（再生コントロール）
                 PlayerBar(viewModel)
+                
+                HorizontalDivider()
+                
+                var menuExpanded by remember { mutableStateOf(false) }
+                
+                // ボトムナビゲーション（Spotifyスタイル）
+                NavigationBar(
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                ) {
+                    // メニューアイコン（その他）を最初に配置
+                    NavigationBarItem(
+                        selected = false,
+                        onClick = { menuExpanded = true },
+                        icon = {
+                            Icon(Icons.Default.MoreVert, contentDescription = "メニュー")
+                        },
+                        label = { Text("その他") }
+                    )
+                    
+                    // タブ（番組を探す、ダウンロード）
+                    tabs.forEachIndexed { index, title ->
+                        NavigationBarItem(
+                            selected = tabIndex == index,
+                            onClick = { tabIndex = index },
+                            icon = {
+                                Icon(
+                                    imageVector = if (index == 0) 
+                                        Icons.Default.Search 
+                                    else 
+                                        Icons.Default.Download,
+                                    contentDescription = title
+                                )
+                            },
+                            label = { Text(title) }
+                        )
+                    }
+                }
+                
+                var showAreaDialog by remember { mutableStateOf(false) }
+                
+                // ドロップダウンメニュー
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("エリア変更") },
+                        onClick = {
+                            menuExpanded = false
+                            showAreaDialog = true
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("ライセンス情報") },
+                        onClick = {
+                            menuExpanded = false
+                            context.startActivity(Intent(context, OssLicensesMenuActivity::class.java))
+                        }
+                    )
+                }
+                
+                // エリア選択ダイアログ
+                if (showAreaDialog) {
+                    AreaSelectionDialog(
+                        currentAreaId = viewModel.selectedAreaId.collectAsState().value,
+                        onAreaSelected = { 
+                            viewModel.onAreaSelected(it)
+                            showAreaDialog = false
+                        },
+                        onDismiss = { showAreaDialog = false }
+                    )
+                }
             }
         }
     ) { padding ->
@@ -245,8 +279,7 @@ fun FindProgramsScreen(viewModel: MainViewModel) {
                         } else {
                             ProgramGuideList(
                                 programs = filteredPrograms,
-                                onDownloadClick = { program, chunkSize -> viewModel.onDownloadProgram(program, chunkSize) },
-                                onPlayClick = { viewModel.playStream(it) }
+                                onDownloadClick = { program, chunkSize -> viewModel.onDownloadProgram(program, chunkSize) }
                             )
                         }
                     }
@@ -455,13 +488,13 @@ fun DateChips(
             ) {
                  Text(
                      text = if (isToday) "今日" else shortFormatter.format(date),
-                     fontSize = 10.sp,
-                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                     fontSize = 14.sp,
+                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                      color = contentColor
                  )
                  Text(
                      text = dayFormatter.format(date),
-                     fontSize = 10.sp,
+                     fontSize = 12.sp,
                      color = contentColor
                  )
             }
@@ -502,8 +535,7 @@ fun DateSelector(dateList: List<Date>, selectedDate: Date, onDateSelected: (Date
 @Composable
 fun ProgramGuideList(
     programs: List<AirkastProgram>, 
-    onDownloadClick: (AirkastProgram, Int) -> Unit,
-    onPlayClick: (AirkastProgram) -> Unit
+    onDownloadClick: (AirkastProgram, Int) -> Unit
 ) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         items(programs) { program ->
@@ -513,12 +545,8 @@ fun ProgramGuideList(
                 Text("出演者: ${program.performer}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (program.isDownloadable) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Row(modifier = Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onPlayClick(program) }) {
-                            Text("試聴")
-                        }
-                        
-                        Button(onClick = { onDownloadClick(program, 60) }) { // 直接推奨設定(60s)で開始
+                    Row(modifier = Modifier.align(Alignment.End)) {
+                        Button(onClick = { onDownloadClick(program, 60) }) {
                             Text("ダウンロード")
                         }
                     }
@@ -650,8 +678,8 @@ fun TimeFilterChips(
                     TimeFilter.MIDNIGHT -> "深夜" to "24-29"
                 }
                 
-                Text(text = labelMain, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = contentColor)
-                Text(text = labelSub, fontSize = 9.sp, color = contentColor)
+                Text(text = labelMain, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = contentColor)
+                Text(text = labelSub, fontSize = 12.sp, color = contentColor)
             }
         }
     }
@@ -751,11 +779,25 @@ fun PlayerBar(viewModel: MainViewModel) {
                     }
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { viewModel.skipBackward() }) {
-                        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "15秒戻る")
-                    }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // 30秒戻る
+                    SkipButton(
+                        onClick = { viewModel.skipBackward(30) },
+                        label = "30",
+                        isForward = false
+                    )
                     
+                    // 15秒戻る
+                    SkipButton(
+                        onClick = { viewModel.skipBackward(15) },
+                        label = "15",
+                        isForward = false
+                    )
+                    
+                    // 再生/停止
                     LargeFloatingActionButton(
                         onClick = { viewModel.playPause() },
                         modifier = Modifier.size(56.dp),
@@ -766,9 +808,19 @@ fun PlayerBar(viewModel: MainViewModel) {
                         Icon(icon, contentDescription = if (isPlaying) "停止" else "再生")
                     }
 
-                    IconButton(onClick = { viewModel.skipForward() }) {
-                        Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "30秒送る")
-                    }
+                    // 1分送る
+                    SkipButton(
+                        onClick = { viewModel.skipForward(60) },
+                        label = "1m",
+                        isForward = true
+                    )
+                    
+                    // 2分送る
+                    SkipButton(
+                        onClick = { viewModel.skipForward(120) },
+                        label = "2m",
+                        isForward = true
+                    )
                 }
                 
                 // Placeholder to balance the speed selector on the left
@@ -785,6 +837,41 @@ private fun formatTime(ms: Long): String {
     return "%d:%02d".format(minutes, seconds)
 }
 
+/**
+ * 秒数ラベル付きスキップボタン
+ */
+@Composable
+fun SkipButton(
+    onClick: () -> Unit,
+    label: String,
+    isForward: Boolean,
+    modifier: Modifier = Modifier
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = modifier.size(44.dp)
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = if (isForward) 
+                    Icons.AutoMirrored.Filled.Redo 
+                else 
+                    Icons.AutoMirrored.Filled.Undo,
+                contentDescription = if (isForward) "${label}送る" else "${label}戻る",
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                lineHeight = 10.sp
+            )
+        }
+    }
+}
 
 
 @Composable
@@ -834,6 +921,75 @@ fun DownloadConfirmationDialog(
                 Text("開始")
             }
         },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("キャンセル")
+            }
+        }
+    )
+}
+
+/**
+ * エリア選択ダイアログ
+ */
+@Composable
+fun AreaSelectionDialog(
+    currentAreaId: String,
+    onAreaSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    // 主要なエリアリスト
+    val areas = listOf(
+        "JP13" to "東京",
+        "JP27" to "大阪",
+        "JP25" to "滋賀",
+        "JP24" to "三重",
+        "JP36" to "徳島",
+        "JP01" to "北海道",
+        "JP04" to "宮城",
+        "JP23" to "愛知",
+        "JP26" to "京都",
+        "JP28" to "兵庫",
+        "JP34" to "広島",
+        "JP40" to "福岡"
+    )
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("エリア変更") },
+        text = {
+            Column {
+                Text(
+                    "※ IPアドレスが一致しないエリアの番組は再生できない場合があります",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                
+                LazyColumn {
+                    items(areas) { (areaId, areaName) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onAreaSelected(areaId) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = (currentAreaId == areaId),
+                                onClick = { onAreaSelected(areaId) }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "$areaName ($areaId)",
+                                fontWeight = if (currentAreaId == areaId) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("キャンセル")

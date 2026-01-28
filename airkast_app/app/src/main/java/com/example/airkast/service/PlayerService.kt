@@ -132,6 +132,30 @@ import java.util.UUID
                     saveCurrentPosition()
                 }
             }
+            
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                Log.e("PlayerService", "Player error: ${error.message}", error)
+                
+                // エラーメッセージをユーザーに通知
+                val userMessage = when {
+                    error.cause?.message?.contains("403") == true -> 
+                        "エリア外エラー: この番組はお住まいの地域では再生できません"
+                    error.cause?.message?.contains("404") == true -> 
+                        "番組が見つかりません"
+                    error.cause?.message?.contains("401") == true -> 
+                        "認証エラー: アプリを再起動してください"
+                    error.cause is java.net.UnknownHostException -> 
+                        "ネットワークエラー: インターネット接続を確認してください"
+                    error.cause is java.net.SocketTimeoutException -> 
+                        "タイムアウト: 通信に時間がかかっています"
+                    else -> 
+                        "再生エラー: ${error.message ?: "不明なエラー"}"
+                }
+                
+                serviceScope.launch {
+                    (application as AirkastApplication).emitPlayerServiceMessage(userMessage)
+                }
+            }
         })
 
         val activityIntent = Intent(this, MainActivity::class.java).apply {

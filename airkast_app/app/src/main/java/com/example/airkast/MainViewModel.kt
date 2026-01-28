@@ -333,16 +333,29 @@ class MainViewModel(
         }
     }
 
-    fun skipForward() {
+    /**
+     * 指定した秒数だけ前にスキップします。
+     * @param seconds スキップする秒数（正の値）
+     */
+    fun skipForward(seconds: Int = 30) {
         val controller = mediaController ?: return
-        Log.d(TAG, "skipForward: +30s")
-        controller.seekForward()
+        val currentPos = controller.currentPosition
+        val duration = controller.duration
+        val newPos = minOf(currentPos + seconds * 1000L, if (duration > 0) duration else Long.MAX_VALUE)
+        Log.d(TAG, "skipForward: +${seconds}s (${currentPos}ms -> ${newPos}ms)")
+        controller.seekTo(newPos)
     }
 
-    fun skipBackward() {
+    /**
+     * 指定した秒数だけ後ろにスキップします。
+     * @param seconds スキップする秒数（正の値）
+     */
+    fun skipBackward(seconds: Int = 15) {
         val controller = mediaController ?: return
-        Log.d(TAG, "skipBackward: -15s")
-        controller.seekBack()
+        val currentPos = controller.currentPosition
+        val newPos = maxOf(currentPos - seconds * 1000L, 0L)
+        Log.d(TAG, "skipBackward: -${seconds}s (${currentPos}ms -> ${newPos}ms)")
+        controller.seekTo(newPos)
     }
 
     fun playStream(program: AirkastProgram) {
@@ -446,6 +459,29 @@ class MainViewModel(
         _selectedStationId.value = stationId
         savePreferences()
         fetchProgramGuide()
+    }
+
+    /**
+     * ユーザーがエリアを変更したときに呼び出されます。
+     * @param areaId 選択されたエリアID（例: "JP13"）。
+     */
+    fun onAreaSelected(areaId: String) {
+        _selectedAreaId.value = areaId
+        _selectedStationId.value = null
+        _programGuideUiState.value = UiState.Idle
+        
+        // 新しいエリアの放送局リストを取得
+        viewModelScope.launch {
+            _stationUiState.value = UiState.Loading
+            try {
+                val stations = client.getStations(areaId)
+                _stationUiState.value = UiState.Success(stations)
+                _userMessage.emit("エリアを変更しました: $areaId (${stations.size}局)")
+            } catch (e: Exception) {
+                _stationUiState.value = UiState.Error(StationListException(e.message ?: "Unknown error", e))
+                _userMessage.emit("エラー: ${e.message}")
+            }
+        }
     }
 
     /**
