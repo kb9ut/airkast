@@ -21,7 +21,6 @@ export default function DownloadButton({ program, authToken }: DownloadButtonPro
     setError(null);
 
     try {
-      // Generate HLS URL
       const lsid = crypto.randomUUID().replace(/-/g, "");
       const ft = program.startTime;
       const to = program.endTime;
@@ -36,19 +35,14 @@ export default function DownloadButton({ program, authToken }: DownloadButtonPro
         return new Date(y, m, d, h, min, s).getTime();
       };
 
-      const totalDurationMs = parseTime(to) - parseTime(ft);
-      const chunkDurationMs = 300 * 1000; // 5 minutes per chunk
+      const chunkDurationMs = 300 * 1000;
       const allSegmentUrls: string[] = [];
-
-      // Fetch playlists in chunks (like the Android app)
       let currentStart = parseTime(ft);
       const endMs = parseTime(to);
 
       while (currentStart < endMs) {
         const currentEnd = Math.min(currentStart + chunkDurationMs, endMs);
         const durationSeconds = Math.floor((currentEnd - currentStart) / 1000);
-
-        // Format times back to yyyyMMddHHmmss
         const fmtTs = (ms: number) => {
           const d = new Date(ms);
           return (
@@ -60,10 +54,8 @@ export default function DownloadButton({ program, authToken }: DownloadButtonPro
             String(d.getSeconds()).padStart(2, "0")
           );
         };
-
         const chunkFt = fmtTs(currentStart);
         const chunkTo = fmtTs(currentEnd);
-
         const hlsUrl =
           `https://tf-f-rpaa-radiko.smartstream.ne.jp/tf/playlist.m3u8` +
           `?station_id=${program.stationId}` +
@@ -78,37 +70,33 @@ export default function DownloadButton({ program, authToken }: DownloadButtonPro
         const playlistData = await playlistRes.json();
         if (playlistData.error) throw new Error(playlistData.error);
 
-        // Deduplicate segments
         for (const seg of playlistData.segments) {
           const segId = seg.split("?")[0];
           if (!allSegmentUrls.some((s) => s.split("?")[0] === segId)) {
             allSegmentUrls.push(seg);
           }
         }
-
         currentStart = currentEnd;
       }
 
       if (allSegmentUrls.length === 0) {
-        throw new Error("セグメントが見つかりませんでした");
+        throw new Error("No segments found");
       }
 
       setState("downloading");
 
-      // Download segments and accumulate
       const chunks: Uint8Array[] = [];
       for (let i = 0; i < allSegmentUrls.length; i++) {
         const segUrl = allSegmentUrls[i];
         const res = await fetch(
           `/api/stream?url=${encodeURIComponent(segUrl)}&authToken=${encodeURIComponent(authToken)}`
         );
-        if (!res.ok) throw new Error(`セグメント ${i + 1} のダウンロードに失敗`);
+        if (!res.ok) throw new Error(`Segment ${i + 1} failed`);
         const data = new Uint8Array(await res.arrayBuffer());
         chunks.push(data);
         setProgress(Math.round(((i + 1) / allSegmentUrls.length) * 100));
       }
 
-      // Concatenate all chunks
       const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
       const result = new Uint8Array(totalLength);
       let offset = 0;
@@ -117,7 +105,6 @@ export default function DownloadButton({ program, authToken }: DownloadButtonPro
         offset += chunk.length;
       }
 
-      // Create download link
       const blob = new Blob([result], { type: "audio/aac" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -132,60 +119,95 @@ export default function DownloadButton({ program, authToken }: DownloadButtonPro
       setState("done");
       setTimeout(() => setState("idle"), 3000);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ダウンロードに失敗しました");
+      setError(e instanceof Error ? e.message : "Download failed");
       setState("error");
     }
   }, [program, authToken]);
 
+  // Idle - download icon button
   if (state === "idle") {
     return (
       <button
         onClick={download}
-        className="shrink-0 px-3 py-1.5 bg-green-700 hover:bg-green-600 rounded text-xs font-medium"
+        className="size-10 rounded-full flex items-center justify-center transition-all duration-200 active:scale-90"
+        style={{
+          background: "var(--accent)",
+          color: "#fff",
+          boxShadow: "0 2px 8px rgba(0, 122, 255, 0.3)",
+        }}
+        aria-label="Download"
       >
-        DL
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
       </button>
     );
   }
 
+  // Preparing
   if (state === "fetching_playlist") {
     return (
-      <div className="shrink-0 px-3 py-1.5 bg-gray-700 rounded text-xs text-gray-300">
-        準備中...
+      <div className="size-10 rounded-full flex items-center justify-center" style={{ background: "var(--bg-tertiary)" }}>
+        <div className="size-5 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: "var(--accent)", borderTopColor: "transparent" }} />
       </div>
     );
   }
 
+  // Downloading - glassmorphism circular progress
   if (state === "downloading") {
+    const circumference = 2 * Math.PI * 16;
+    const strokeDashoffset = circumference - (progress / 100) * circumference;
     return (
-      <div className="shrink-0 flex items-center gap-2">
-        <div className="w-16 bg-gray-700 rounded-full h-2">
-          <div
-            className="bg-blue-500 h-2 rounded-full transition-all"
-            style={{ width: `${progress}%` }}
+      <div className="size-10 relative flex items-center justify-center">
+        <svg className="size-10 -rotate-90" viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="16" fill="none" stroke="var(--border-color-strong)" strokeWidth="3" />
+          <circle
+            cx="20" cy="20" r="16" fill="none"
+            stroke="var(--accent)"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            className="transition-all duration-300"
+            style={{ filter: "drop-shadow(0 0 4px rgba(0,122,255,0.4))" }}
           />
-        </div>
-        <span className="text-xs text-gray-400">{progress}%</span>
+        </svg>
+        <span className="absolute text-[9px] font-semibold" style={{ color: "var(--text-secondary)" }}>
+          {progress}
+        </span>
       </div>
     );
   }
 
+  // Done - checkmark
   if (state === "done") {
     return (
-      <div className="shrink-0 px-3 py-1.5 bg-green-900 rounded text-xs text-green-300">
-        完了
+      <div
+        className="size-10 rounded-full flex items-center justify-center"
+        style={{ background: "var(--success-bg)", color: "var(--success)" }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
       </div>
     );
   }
 
-  // error
+  // Error - retry
   return (
     <button
       onClick={() => { setState("idle"); setError(null); }}
-      className="shrink-0 px-3 py-1.5 bg-red-900 rounded text-xs text-red-300"
+      className="size-10 rounded-full flex items-center justify-center transition-all active:scale-90"
+      style={{ background: "var(--error-bg)", color: "var(--error)" }}
       title={error || ""}
+      aria-label="Retry"
     >
-      失敗 (再試行)
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="23 4 23 10 17 10" />
+        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+      </svg>
     </button>
   );
 }

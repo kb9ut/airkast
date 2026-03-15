@@ -2,7 +2,14 @@
 
 import { useState, useEffect } from "react";
 import type { Station, Program, AuthState } from "@/lib/types";
-import { formatTime, formatDateForApi, formatDateDisplay, getPastDates, isProgramPast } from "@/lib/types";
+import {
+  formatTime,
+  formatDateForApi,
+  formatDateDisplay,
+  formatDuration,
+  getPastDates,
+  isProgramPast,
+} from "@/lib/types";
 import DownloadButton from "@/components/DownloadButton";
 
 const AREA_LIST = [
@@ -25,13 +32,23 @@ const AREA_LIST = [
 ];
 
 const TIME_FILTERS = [
-  { label: "早朝 (5-9)", start: 5, end: 9 },
-  { label: "午前 (9-12)", start: 9, end: 12 },
-  { label: "午後 (12-17)", start: 12, end: 17 },
-  { label: "夜 (17-21)", start: 17, end: 21 },
-  { label: "深夜 (21-29)", start: 21, end: 29 },
-  { label: "全て", start: 0, end: 29 },
+  { label: "早朝", sub: "5-9", start: 5, end: 9 },
+  { label: "午前", sub: "9-12", start: 9, end: 12 },
+  { label: "午後", sub: "12-17", start: 12, end: 17 },
+  { label: "夜", sub: "17-21", start: 17, end: 21 },
+  { label: "深夜", sub: "21-29", start: 21, end: 29 },
+  { label: "全て", sub: "", start: 0, end: 29 },
 ];
+
+// Deterministic color from station ID for thumbnail backgrounds
+function stationColor(stationId: string): string {
+  let hash = 0;
+  for (let i = 0; i < stationId.length; i++) {
+    hash = stationId.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 45%, 55%)`;
+}
 
 function getHour(timeStr: string): number {
   if (timeStr.length < 10) return 0;
@@ -56,7 +73,8 @@ export default function Home() {
 
   const [message, setMessage] = useState<string | null>(null);
 
-  // Auth on mount
+  const selectedStation = stations.find((s) => s.id === selectedStationId);
+
   useEffect(() => {
     (async () => {
       try {
@@ -66,14 +84,13 @@ export default function Home() {
         setAuth(data);
         setSelectedAreaId(data.areaId);
       } catch (e) {
-        setAuthError(e instanceof Error ? e.message : "認証に失敗しました");
+        setAuthError(e instanceof Error ? e.message : "Authentication failed");
       } finally {
         setAuthLoading(false);
       }
     })();
   }, []);
 
-  // Fetch stations when area changes
   useEffect(() => {
     if (!selectedAreaId) return;
     (async () => {
@@ -83,12 +100,11 @@ export default function Home() {
         if (data.error) throw new Error(data.error);
         setStations(data);
       } catch (e) {
-        setMessage(e instanceof Error ? e.message : "放送局の取得に失敗");
+        setMessage(e instanceof Error ? e.message : "Failed to load stations");
       }
     })();
   }, [selectedAreaId]);
 
-  // Fetch programs when station or date changes
   useEffect(() => {
     if (!selectedStationId || !selectedDate) return;
     (async () => {
@@ -100,7 +116,7 @@ export default function Home() {
         if (data.error) throw new Error(data.error);
         setPrograms(data);
       } catch (e) {
-        setMessage(e instanceof Error ? e.message : "番組表の取得に失敗");
+        setMessage(e instanceof Error ? e.message : "Failed to load programs");
       } finally {
         setProgramsLoading(false);
       }
@@ -113,28 +129,48 @@ export default function Home() {
     return hour >= filter.start && hour < filter.end;
   });
 
+  // Loading
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
+      <div className="min-h-dvh flex items-center justify-center" style={{ background: "var(--bg-secondary)" }}>
         <div className="text-center">
-          <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-          <p className="text-gray-400">Radikoに認証中...</p>
+          <div
+            className="size-12 rounded-full border-[3px] border-t-transparent animate-spin mx-auto mb-5"
+            style={{ borderColor: "var(--border-color-strong)", borderTopColor: "transparent" }}
+          />
+          <p className="text-sm font-medium tracking-tight" style={{ color: "var(--text-tertiary)" }}>
+            Connecting to Radiko...
+          </p>
         </div>
       </div>
     );
   }
 
+  // Auth Error
   if (authError) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-red-400 text-lg mb-2">認証エラー</p>
-          <p className="text-gray-400 text-sm">{authError}</p>
+      <div className="min-h-dvh flex items-center justify-center px-6" style={{ background: "var(--bg-secondary)" }}>
+        <div className="text-center max-w-sm">
+          <div
+            className="size-16 rounded-full flex items-center justify-center mx-auto mb-5"
+            style={{ background: "var(--error-bg)" }}
+          >
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="15" y1="9" x2="9" y2="15" />
+              <line x1="9" y1="9" x2="15" y2="15" />
+            </svg>
+          </div>
+          <h2 className="text-lg font-semibold tracking-tight mb-2" style={{ color: "var(--text-primary)" }}>
+            Connection Failed
+          </h2>
+          <p className="text-sm mb-6" style={{ color: "var(--text-tertiary)" }}>{authError}</p>
           <button
             onClick={() => window.location.reload()}
-            className="mt-4 px-4 py-2 bg-blue-600 rounded hover:bg-blue-500"
+            className="px-6 py-2.5 rounded-full text-sm font-medium text-white transition-all active:scale-95"
+            style={{ background: "var(--accent)" }}
           >
-            再試行
+            Retry
           </button>
         </div>
       </div>
@@ -142,134 +178,233 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className="min-h-dvh" style={{ background: "var(--bg-secondary)" }}>
       {/* Header */}
-      <header className="bg-gray-900 border-b border-gray-800 p-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <h1 className="text-xl font-bold">Airkast Web</h1>
-          <span className="text-xs text-gray-500">
-            エリア: {AREA_LIST.find((a) => a.id === selectedAreaId)?.name || selectedAreaId}
-          </span>
+      <header className="glass-strong sticky top-0 z-40" style={{ borderBottom: "1px solid var(--border-color)" }}>
+        <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
+          <h1 className="text-[22px] font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+            Airkast
+          </h1>
+          <div
+            className="px-3 py-1 rounded-full text-xs font-medium"
+            style={{ background: "var(--accent-subtle)", color: "var(--accent)" }}
+          >
+            {AREA_LIST.find((a) => a.id === selectedAreaId)?.name || selectedAreaId}
+          </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto p-4">
+      <main className="max-w-lg mx-auto px-4 pt-4 pb-12">
         {/* Message */}
         {message && (
-          <div className="mb-4 p-3 bg-yellow-900/50 border border-yellow-700 rounded text-sm text-yellow-200">
-            {message}
-            <button onClick={() => setMessage(null)} className="ml-2 text-yellow-400">
-              &times;
-            </button>
+          <div
+            className="mb-4 px-4 py-3 rounded-2xl flex items-center justify-between text-sm"
+            style={{ background: "var(--error-bg)", color: "var(--error)" }}
+          >
+            <span>{message}</span>
+            <button onClick={() => setMessage(null)} className="ml-2 opacity-60 hover:opacity-100 text-lg leading-none">&times;</button>
           </div>
         )}
 
-        {/* Area Selector */}
-        <div className="mb-4">
-          <label className="block text-xs text-gray-500 mb-1">エリア</label>
-          <select
-            value={selectedAreaId}
-            onChange={(e) => {
-              setSelectedAreaId(e.target.value);
-              setSelectedStationId("");
-              setPrograms([]);
-            }}
-            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
-          >
-            {AREA_LIST.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Station Selector */}
-        <div className="mb-4">
-          <label className="block text-xs text-gray-500 mb-1">放送局</label>
-          <select
-            value={selectedStationId}
-            onChange={(e) => setSelectedStationId(e.target.value)}
-            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
-          >
-            <option value="">-- 放送局を選択 --</option>
-            {stations.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Date Selector */}
-        <div className="mb-4">
-          <label className="block text-xs text-gray-500 mb-1">日付</label>
-          <div className="flex gap-1 overflow-x-auto">
-            {dates.map((d) => (
-              <button
-                key={d.toISOString()}
-                onClick={() => setSelectedDate(d)}
-                className={`px-3 py-1 rounded text-sm whitespace-nowrap ${
-                  formatDateForApi(d) === formatDateForApi(selectedDate)
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-                }`}
-              >
-                {formatDateDisplay(d)}
-              </button>
-            ))}
+        {/* Selectors */}
+        <div className="grid grid-cols-2 gap-3 mb-5">
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "var(--text-tertiary)" }}>
+              Area
+            </label>
+            <select
+              value={selectedAreaId}
+              onChange={(e) => {
+                setSelectedAreaId(e.target.value);
+                setSelectedStationId("");
+                setPrograms([]);
+              }}
+              className="w-full rounded-xl px-3 py-2.5 text-sm font-medium transition-all"
+              style={{
+                background: "var(--bg-card)",
+                border: "1px solid var(--border-color)",
+                color: "var(--text-primary)",
+              }}
+            >
+              {AREA_LIST.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: "var(--text-tertiary)" }}>
+              Station
+            </label>
+            <select
+              value={selectedStationId}
+              onChange={(e) => setSelectedStationId(e.target.value)}
+              className="w-full rounded-xl px-3 py-2.5 text-sm font-medium transition-all"
+              style={{
+                background: "var(--bg-card)",
+                border: "1px solid var(--border-color)",
+                color: selectedStationId ? "var(--text-primary)" : "var(--text-tertiary)",
+              }}
+            >
+              <option value="">Select</option>
+              {stations.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
           </div>
         </div>
 
-        {/* Time Filter */}
+        {/* Date pills */}
         <div className="mb-4">
-          <label className="block text-xs text-gray-500 mb-1">時間帯</label>
-          <div className="flex gap-1 overflow-x-auto">
-            {TIME_FILTERS.map((f, i) => (
-              <button
-                key={f.label}
-                onClick={() => setSelectedTimeFilter(i)}
-                className={`px-3 py-1 rounded text-xs whitespace-nowrap ${
-                  i === selectedTimeFilter
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+            {dates.map((d) => {
+              const active = formatDateForApi(d) === formatDateForApi(selectedDate);
+              return (
+                <button
+                  key={d.toISOString()}
+                  onClick={() => setSelectedDate(d)}
+                  className="flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all active:scale-95"
+                  style={{
+                    background: active ? "var(--accent)" : "var(--bg-card)",
+                    color: active ? "#fff" : "var(--text-secondary)",
+                    border: active ? "none" : "1px solid var(--border-color)",
+                    boxShadow: active ? "0 2px 8px rgba(0, 122, 255, 0.25)" : "none",
+                  }}
+                >
+                  {formatDateDisplay(d)}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Program List */}
+        {/* Time filter chips */}
+        <div className="mb-6">
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+            {TIME_FILTERS.map((f, i) => {
+              const active = i === selectedTimeFilter;
+              return (
+                <button
+                  key={f.label}
+                  onClick={() => setSelectedTimeFilter(i)}
+                  className="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all active:scale-95"
+                  style={{
+                    background: active ? "var(--text-primary)" : "transparent",
+                    color: active ? "var(--bg-primary)" : "var(--text-tertiary)",
+                    border: active ? "none" : "1px solid var(--border-color)",
+                  }}
+                >
+                  {f.label}{f.sub && <span className="ml-0.5 opacity-60">{f.sub}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Program Grid */}
         {programsLoading ? (
-          <div className="flex justify-center py-12">
-            <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full" />
+          <div className="flex justify-center py-20">
+            <div
+              className="size-8 rounded-full border-[3px] border-t-transparent animate-spin"
+              style={{ borderColor: "var(--border-color-strong)", borderTopColor: "transparent" }}
+            />
           </div>
-        ) : selectedStationId && filteredPrograms.length === 0 ? (
-          <p className="text-gray-500 text-center py-8">番組がありません</p>
+        ) : !selectedStationId ? (
+          <div className="text-center py-20">
+            <div className="size-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: "var(--bg-tertiary)" }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
+                <line x1="2" y1="20" x2="2.01" y2="20" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium" style={{ color: "var(--text-tertiary)" }}>
+              Select a station to browse programs
+            </p>
+          </div>
+        ) : filteredPrograms.length === 0 ? (
+          <p className="text-center py-20 text-sm" style={{ color: "var(--text-tertiary)" }}>
+            No programs found
+          </p>
         ) : (
-          <div className="space-y-2">
+          <div className="grid grid-cols-1 gap-3">
             {filteredPrograms.map((p) => {
               const past = isProgramPast(p.endTime);
+              const color = stationColor(p.stationId);
               return (
                 <div
                   key={p.id}
-                  className="bg-gray-900 border border-gray-800 rounded-lg p-3 hover:border-gray-600 transition-colors"
+                  className="rounded-2xl overflow-hidden transition-all duration-200"
+                  style={{
+                    background: "var(--bg-card)",
+                    border: "1px solid var(--border-color)",
+                    boxShadow: "var(--shadow-sm)",
+                  }}
                 >
-                  <div className="flex items-start gap-3">
-                    <div className="text-xs text-gray-500 w-20 shrink-0 pt-0.5">
-                      {formatTime(p.startTime)} - {formatTime(p.endTime)}
+                  <div className="flex">
+                    {/* Thumbnail area */}
+                    {p.imageUrl ? (
+                      <div className="w-24 h-24 flex-shrink-0 relative overflow-hidden">
+                        <img
+                          src={p.imageUrl}
+                          alt=""
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        className="w-24 h-24 flex-shrink-0 flex items-center justify-center"
+                        style={{ background: `${color}18` }}
+                      >
+                        <span className="text-2xl font-bold opacity-30" style={{ color }}>
+                          {p.stationId.slice(0, 2)}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0 p-3 flex flex-col justify-between">
+                      <div>
+                        <h3
+                          className="text-[15px] font-semibold leading-tight tracking-tight line-clamp-2"
+                          style={{ color: "var(--text-primary)" }}
+                        >
+                          {p.title || "Untitled"}
+                        </h3>
+                        {p.performer && (
+                          <p className="text-xs mt-1 truncate" style={{ color: "var(--text-tertiary)" }}>
+                            {p.performer}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className="text-[11px] font-medium" style={{ color: "var(--text-tertiary)" }}>
+                          {formatTime(p.startTime)}&ndash;{formatTime(p.endTime)}
+                        </span>
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-md font-medium"
+                          style={{ background: "var(--bg-tertiary)", color: "var(--text-tertiary)" }}
+                        >
+                          {formatDuration(p.startTime, p.endTime)}
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm truncate">{p.title || "(タイトルなし)"}</p>
-                      {p.performer && (
-                        <p className="text-xs text-gray-400 mt-0.5 truncate">{p.performer}</p>
+
+                    {/* Download action */}
+                    <div className="flex items-center pr-3">
+                      {past && auth ? (
+                        <DownloadButton program={p} authToken={auth.authToken} />
+                      ) : (
+                        <div
+                          className="size-10 rounded-full flex items-center justify-center"
+                          style={{ background: "var(--bg-tertiary)" }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.4">
+                            <circle cx="12" cy="12" r="10" />
+                            <polyline points="12 6 12 12 16 14" />
+                          </svg>
+                        </div>
                       )}
                     </div>
-                    {past && auth && (
-                      <DownloadButton program={p} authToken={auth.authToken} />
-                    )}
                   </div>
                 </div>
               );

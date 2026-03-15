@@ -44,6 +44,23 @@ export function formatDateDisplay(date: Date): string {
   return `${m}/${d}(${day})`;
 }
 
+export function formatDuration(startTime: string, endTime: string): string {
+  const parseMs = (t: string) => {
+    const y = parseInt(t.slice(0, 4));
+    const m = parseInt(t.slice(4, 6)) - 1;
+    const d = parseInt(t.slice(6, 8));
+    const h = parseInt(t.slice(8, 10));
+    const min = parseInt(t.slice(10, 12));
+    const s = parseInt(t.slice(12, 14));
+    return new Date(y, m, d, h, min, s).getTime();
+  };
+  const mins = Math.round((parseMs(endTime) - parseMs(startTime)) / 60000);
+  if (mins < 60) return `${mins}min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
 export function getPastDates(count: number): Date[] {
   const dates: Date[] = [];
   for (let i = count - 1; i >= 0; i--) {
