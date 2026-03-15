@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { authenticate } from "@/lib/radiko";
 
+export const maxDuration = 30;
+
 /**
  * POST /api/auth
  * Performs Radiko auth1 + auth2 and returns the auth token and area ID.

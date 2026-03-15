@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProgramGuide } from "@/lib/radiko";
 
+export const maxDuration = 30;
+
 /**
  * GET /api/programs?stationId=TBS&date=20260315
  * Returns program guide for the given station and date.

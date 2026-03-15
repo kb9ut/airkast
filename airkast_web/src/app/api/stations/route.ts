@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStations } from "@/lib/radiko";
 
+export const maxDuration = 30;
+
 /**
  * GET /api/stations?areaId=JP13
  * Returns station list for the given area.
