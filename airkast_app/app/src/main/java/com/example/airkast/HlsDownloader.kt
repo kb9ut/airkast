@@ -245,6 +245,13 @@ class HlsDownloader(private val client: HttpClient) {
                                   ((header[4].toInt() and 0xFF) shl 3) or 
                                   ((header[5].toInt() and 0xE0) shr 5)
 
+                // Validate sample rate index to prevent divide by zero
+                val sampleRate = samplingRates[sampleRateIdx]
+                if (sampleRate <= 0) {
+                    Log.w(TAG, "Invalid sample rate index: $sampleRateIdx (rate=0) at frame $frameCount, skipping")
+                    continue
+                }
+
                 val sampleSize = frameLength - headerSize
                 if (sampleSize <= 0 || sampleSize > sampleBuffer.capacity()) {
                     Log.w(TAG, "Invalid sample size: $sampleSize at frame $frameCount")
@@ -253,7 +260,6 @@ class HlsDownloader(private val client: HttpClient) {
 
                 // Initialize muxer on first frame
                 if (trackIndex == -1) {
-                    val sampleRate = samplingRates[sampleRateIdx]
                     Log.d(TAG, "Initializing muxer: rate=$sampleRate, channels=$channelConfig, profile=$profile")
                     
                     val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelConfig)
@@ -283,7 +289,7 @@ class HlsDownloader(private val client: HttpClient) {
                 muxer.writeSampleData(trackIndex, sampleBuffer, bufferInfo)
                 
                 // Increment PTS (AAC normally 1024 samples/frame)
-                presentationTimeUs += (1024 * 1000000L / samplingRates[sampleRateIdx])
+                presentationTimeUs += (1024 * 1000000L / sampleRate)
                 frameCount++
                 
                 processedBytes += frameLength
