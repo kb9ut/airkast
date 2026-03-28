@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.airkast.AirkastApplication
 import com.example.airkast.AirkastClient
@@ -16,11 +17,10 @@ import com.example.airkast.AirkastProgram
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Semaphore
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.UUID
+
+private const val TAG = "HlsDownloadService"
 
 class HlsDownloadService : Service() {
 
@@ -29,13 +29,11 @@ class HlsDownloadService : Service() {
     private lateinit var notificationManager: NotificationManager
     private lateinit var client: AirkastClient
 
-    // 各ダウンロードのJobを保持する
+    // 各ダウンロードのJobを保持する (programId -> Job)
     private val downloadJobs = mutableMapOf<String, Job>()
-    
-    // ダウンロードキュー（並列ダウンロードによるファイル破損を防ぐため、直列処理にする）
-    private val downloadQueue = mutableListOf<Pair<AirkastProgram, Int>>()
-    private val downloadMutex = kotlinx.coroutines.sync.Mutex()
-    private var isProcessingQueue = false
+
+    // 同時ダウンロード数の上限（ネットワーク・CPU負荷を考慮）
+    private val downloadSemaphore = Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
     companion object {
         const val ACTION_START_DOWNLOAD = "ACTION_START_DOWNLOAD"
@@ -45,20 +43,19 @@ class HlsDownloadService : Service() {
         const val EXTRA_CHUNK_SIZE = "EXTRA_CHUNK_SIZE"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "HlsDownloadServiceChannel"
+        private const val MAX_CONCURRENT_DOWNLOADS = 3
 
         // ダウンロード状態の管理 (Static access for ViewModel)
         private val _downloadStates = MutableStateFlow<Map<String, DownloadStatus>>(emptyMap())
         val downloadStates = _downloadStates.asStateFlow()
 
         fun getDownloadFile(context: Context, program: AirkastProgram): File {
-            // ファイル名に使えない文字を置換
             val safeTitle = program.title.replace(Regex("[/:\\\\*?\"<>|]"), "_")
             val stationId = program.stationId.ifEmpty { "unknown" }
-            // 形式: 放送局ID_番組名_開始時刻_終了時刻.m4a
             val fileName = "${stationId}_${safeTitle}_${program.startTime}_${program.endTime}.m4a"
             return File(context.getExternalFilesDir("downloads"), fileName)
         }
-        
+
         data class ParsedFileName(
             val stationId: String,
             val title: String,
@@ -69,19 +66,18 @@ class HlsDownloadService : Service() {
         fun parseFileName(fileName: String): ParsedFileName? {
             val nameWithoutExt = fileName.substringBeforeLast(".")
             val parts = nameWithoutExt.split("_")
-            
+
             // 新形式 (4つ以上のパーツ): stationId_title_startTime_endTime
             if (parts.size >= 4) {
                 val endTime = parts.last()
                 val startTime = parts[parts.size - 2]
                 if (startTime.length == 14 && endTime.length == 14) {
                     val stationId = parts.first()
-                    // タイトルにアンダースコアが含まれる可能性があるため、中間を結合
                     val title = parts.subList(1, parts.size - 2).joinToString("_")
                     return ParsedFileName(stationId, title, startTime, endTime)
                 }
             }
-            
+
             // 旧形式 (3つのパーツ): title_startTime_endTime
             if (parts.size >= 3) {
                 val endTime = parts.last()
@@ -102,7 +98,6 @@ class HlsDownloadService : Service() {
             return null
         }
 
-        // Keep for backward compatibility if needed, but we'll use parseFileName
         fun parseTimesFromFileName(fileName: String): Pair<String, String>? {
             val parsed = parseFileName(fileName)
             if (parsed != null && parsed.startTime.isNotEmpty() && parsed.endTime.isNotEmpty()) {
@@ -127,8 +122,6 @@ class HlsDownloadService : Service() {
         client = (application as AirkastApplication).airkastClient
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createInitialNotification())
-        
-        // Prune the static map if it gets too large
         pruneDownloadStates()
     }
 
@@ -141,7 +134,7 @@ class HlsDownloadService : Service() {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra(EXTRA_PROGRAM)
                 }
-                val chunkSize = intent.getIntExtra(EXTRA_CHUNK_SIZE, 60) // Default 60s
+                val chunkSize = intent.getIntExtra(EXTRA_CHUNK_SIZE, 60)
                 program?.let { startDownload(it, chunkSize) }
             }
             ACTION_CANCEL_DOWNLOAD -> {
@@ -152,75 +145,55 @@ class HlsDownloadService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * ダウンロードを開始する。すでにダウンロード中の場合はスキップ。
+     * Semaphoreで最大同時実行数を制御し、各ダウンロードは独立したCoroutineで実行。
+     */
     private fun startDownload(program: AirkastProgram, chunkSizeSeconds: Int) {
-        // すでに同じ番組がダウンロード中またはキューにある場合はスキップ
-        if (downloadJobs.containsKey(program.id)) return
-        if (downloadQueue.any { it.first.id == program.id }) return
-        
-        // 状態をPendingに更新
-        updateState(program.id, DownloadStatus.Pending(program))
-        
-        // キューに追加
-        downloadQueue.add(Pair(program, chunkSizeSeconds))
-        
-        // キュー処理を開始（まだ開始していない場合）
-        processNextInQueue()
-        
-        updateNotification()
-    }
-    
-    private fun processNextInQueue() {
-        if (isProcessingQueue) return
-        if (downloadQueue.isEmpty()) {
-            // キューが空になったらサービスを停止
-            if (downloadJobs.isEmpty()) {
-                stopSelf()
-            }
-            return
-        }
-        
-        isProcessingQueue = true
-        val (program, chunkSizeSeconds) = downloadQueue.removeAt(0)
-        
+        // 重複チェック
         if (downloadJobs.containsKey(program.id)) {
-            // 既にダウンロード中（通常は発生しないはず）
-            isProcessingQueue = false
-            processNextInQueue()
+            Log.d(TAG, "Already downloading: ${program.id}")
             return
         }
-        
-        val outputFile = getDownloadFile(this, program)
-        val downloadJob = serviceScope.launch {
-            try {
-                // HlsDownloaderのインスタンス化
-                val hlsDownloader = HlsDownloader(client.client)
 
-                // 状態を更新
+        // 状態をPendingに（Semaphore取得待ち）
+        updateState(program.id, DownloadStatus.Pending(program))
+        updateNotification()
+
+        val outputFile = getDownloadFile(this, program)
+        val job = serviceScope.launch {
+            try {
+                // Semaphore取得を待つ（最大同時実行数に達している場合はここでサスペンド）
+                Log.d(TAG, "Waiting for semaphore: ${program.title}")
+                downloadSemaphore.acquire()
+                Log.d(TAG, "Semaphore acquired, starting: ${program.title}")
+
+                // ダウンロード開始
                 updateState(program.id, DownloadStatus.InProgress(program, 0))
                 updateNotification()
-                
-                // 時間をパース
+
+                val hlsDownloader = HlsDownloader(client.client)
+
                 val format = java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.JAPAN)
                 val startTime = format.parse(program.startTime)?.time ?: 0L
                 val endTime = format.parse(program.endTime)?.time ?: 0L
-                
+
                 if (startTime == 0L || endTime == 0L || startTime >= endTime) {
-                     throw Exception("Invalid program duration: start=$startTime, end=$endTime")
+                    throw Exception("Invalid program duration: start=$startTime, end=$endTime")
                 }
 
-                val downloadLsid = client.generateNewLsid() // Generate lsid once for the entire download
+                val downloadLsid = client.generateNewLsid()
 
-                // ダウンロード実行 (分割ダウンロード)
                 hlsDownloader.downloadChunked(
                     outputFile = outputFile,
                     startTime = startTime,
                     endTime = endTime,
-                    chunkDurationSeconds = chunkSizeSeconds, // ユーザー指定のサイズを使用
+                    chunkDurationSeconds = chunkSizeSeconds,
                     authToken = client.authToken ?: "",
                     urlGenerator = { s, e ->
                         val sStr = format.format(java.util.Date(s))
                         val eStr = format.format(java.util.Date(e))
-                        client.generateHlsUrl(program, sStr, eStr, downloadLsid) // Pass the consistent lsid
+                        client.generateHlsUrl(program, sStr, eStr, downloadLsid)
                     },
                     onProgress = { floatProgress ->
                         val intProgress = (floatProgress * 100).toInt()
@@ -236,85 +209,73 @@ class HlsDownloadService : Service() {
 
                 updateState(program.id, DownloadStatus.Completed(program, outputFile))
             } catch (e: CancellationException) {
-                // ジョブがキャンセルされた場合
                 if (outputFile.exists()) outputFile.delete()
                 updateState(program.id, DownloadStatus.Canceled(program))
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Download failed: ${program.title}: ${e.message}", e)
                 if (outputFile.exists()) outputFile.delete()
                 updateState(program.id, DownloadStatus.Error(program, e.message ?: "Unknown error"))
             } finally {
+                downloadSemaphore.release()
                 downloadJobs.remove(program.id)
-                isProcessingQueue = false
                 updateNotification()
-                // 次のダウンロードを開始
-                processNextInQueue()
+                // 全ジョブ完了ならサービス停止
+                if (downloadJobs.isEmpty()) {
+                    stopSelf()
+                }
             }
         }
-        downloadJobs[program.id] = downloadJob
-        updateNotification()
+        downloadJobs[program.id] = job
     }
 
     private fun cancelDownload(programId: String) {
-        // キューからも削除
-        downloadQueue.removeAll { it.first.id == programId }
-        
         downloadJobs[programId]?.cancel()
         downloadJobs.remove(programId)
         val currentState = _downloadStates.value[programId]
-        val program = currentState?.program ?: AirkastProgram("unknown", "Unknown", "Unknown", "20000101000000", "20000101010000", "", "", "")
-        
+        val program = currentState?.program ?: AirkastProgram(
+            "unknown", "Unknown", "Unknown",
+            "20000101000000", "20000101010000", "", "", ""
+        )
+
         updateState(programId, DownloadStatus.Canceled(program))
-        updateState(programId, DownloadStatus.Canceled(program))
-        
-        // 関連するファイルのクリーンアップ
+
+        // 関連ファイルのクリーンアップ
         val finalFile = getDownloadFile(this, program)
-        if (finalFile.exists()) finalFile.delete()
-        
-        // 一時ファイルの削除 (.adts)
-        val adtsFile = File(finalFile.absolutePath + ".adts")
-        if (adtsFile.exists()) adtsFile.delete()
-        
-        // 一時Muxファイルの削除 (.tmp_mux)
-        val tempMuxFile = File(finalFile.absolutePath + ".tmp_mux")
-        if (tempMuxFile.exists()) tempMuxFile.delete()
-        
-        // Rawファイルの削除 (.raw) - 後方互換性のため念のためチェック
-        val rawFile = File(finalFile.absolutePath + ".raw")
-        if (rawFile.exists()) rawFile.delete()
+        listOf(
+            finalFile,
+            File(finalFile.absolutePath + ".adts"),
+            File(finalFile.absolutePath + ".tmp_mux"),
+            File(finalFile.absolutePath + ".raw"),
+        ).forEach { f -> if (f.exists()) f.delete() }
+
         updateNotification()
-        if (downloadJobs.isEmpty() && downloadQueue.isEmpty()) {
+        if (downloadJobs.isEmpty()) {
             stopSelf()
         }
     }
 
     private fun updateState(programId: String, status: DownloadStatus) {
-        // synchronized block to ensure thread safety for map updates, though MutableStateFlow is thread-safe for value setting,
-        // we are doing map addition which is copy-on-write
         val currentMap = _downloadStates.value.toMutableMap()
         currentMap[programId] = status
-        
-        // Prune if map exceeds threshold (e.g., 50 items)
+
+        // Prune if map exceeds threshold
         if (currentMap.size > 50) {
-            val finishedStates = currentMap.filterValues { 
-                it is DownloadStatus.Completed || it is DownloadStatus.Error || it is DownloadStatus.Canceled 
+            val finishedStates = currentMap.filterValues {
+                it is DownloadStatus.Completed || it is DownloadStatus.Error || it is DownloadStatus.Canceled
             }.keys.toList()
-            
-            // Remove oldest finished states to keep size under control
             if (finishedStates.size > 20) {
                 finishedStates.take(finishedStates.size - 20).forEach { currentMap.remove(it) }
             }
         }
-        
+
         _downloadStates.value = currentMap
     }
 
     private fun pruneDownloadStates() {
-        // Clear all terminal states if no active downloads are occurring when service starts
-        if (downloadJobs.isEmpty() && downloadQueue.isEmpty()) {
+        if (downloadJobs.isEmpty()) {
             val currentMap = _downloadStates.value.toMutableMap()
-            val finishedKeys = currentMap.filterValues { 
-                 it is DownloadStatus.Completed || it is DownloadStatus.Error || it is DownloadStatus.Canceled 
+            val finishedKeys = currentMap.filterValues {
+                it is DownloadStatus.Completed || it is DownloadStatus.Error || it is DownloadStatus.Canceled
             }.keys
             if (finishedKeys.isNotEmpty()) {
                 finishedKeys.forEach { currentMap.remove(it) }
@@ -332,24 +293,35 @@ class HlsDownloadService : Service() {
     }
 
     private fun updateNotification() {
-        val ongoingDownloads = downloadJobs.size
-        val notification = if (ongoingDownloads > 0) {
+        val activeCount = downloadJobs.size
+        val notification = if (activeCount > 0) {
             val progressStates = _downloadStates.value.filter { it.key in downloadJobs.keys }
-            val firstActive = progressStates.entries.firstOrNull { 
-                it.value is DownloadStatus.InProgress || it.value is DownloadStatus.Muxing 
+            // アクティブなダウンロードの概要を構築
+            val activeDescriptions = progressStates.entries.mapNotNull { (_, status) ->
+                when (status) {
+                    is DownloadStatus.Pending -> "${status.program.title}: 待機中"
+                    is DownloadStatus.InProgress -> "${status.program.title}: DL ${status.progress}%"
+                    is DownloadStatus.Muxing -> "${status.program.title}: 変換 ${status.progress}%"
+                    else -> null
+                }
             }
-            val title = "Processing ($ongoingDownloads files)"
-            val text = when (val status = firstActive?.value) {
-                is DownloadStatus.InProgress -> "${status.program.title}: Downloading ${status.progress}%"
-                is DownloadStatus.Muxing -> "${status.program.title}: Finalizing ${status.progress}%"
-                else -> "Waiting for queue..."
-            }
+            val title = "ダウンロード中 (${activeCount}件)"
+            val text = activeDescriptions.firstOrNull() ?: "処理中..."
 
             NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
                 .setOnlyAlertOnce(true)
+                .apply {
+                    // 複数ダウンロード時はInboxStyleで一覧表示
+                    if (activeDescriptions.size > 1) {
+                        val inboxStyle = NotificationCompat.InboxStyle()
+                            .setBigContentTitle(title)
+                        activeDescriptions.forEach { inboxStyle.addLine(it) }
+                        setStyle(inboxStyle)
+                    }
+                }
                 .build()
         } else {
             createInitialNotification()
