@@ -6,74 +6,51 @@
     android:viewportWidth="108"
     xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Stylized "A" letter - main strokes -->
-    <!-- Left leg of A -->
-    <path
-        android:fillColor="#1DB954"
-        android:pathData="M40.5,72 L50,34 L54,34 L43.5,72 Z"/>
-    <!-- Right leg of A -->
-    <path
-        android:fillColor="#1DB954"
-        android:pathData="M58,34 L62,34 L71.5,72 L68.5,72 Z"/>
-    <!-- Crossbar of A -->
-    <path
-        android:fillColor="#1DB954"
-        android:pathData="M44,57 L68,57 L67,54 L45,54 Z"/>
-
-    <!-- Audio waveform lines through the A - horizontal sound waves -->
-    <!-- Wave line 1 (left side) -->
+    <!-- Bold "A" frame - modern rounded stroke style -->
     <path
         android:fillColor="#00000000"
-        android:pathData="M28,48 Q32,42 36,48 Q40,54 44,48"
+        android:pathData="M35,76 L54,33 L73,76"
         android:strokeColor="#1DB954"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"/>
-    <!-- Wave line 2 (right side) -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M66,48 Q70,42 74,48 Q78,54 82,48"
-        android:strokeColor="#1DB954"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"/>
-    <!-- Wave line 3 (left lower) -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M30,56 Q34,50 38,56 Q42,62 46,56"
-        android:strokeColor="#1DB954"
-        android:strokeWidth="1.5"
+        android:strokeWidth="8"
         android:strokeLineCap="round"
-        android:strokeAlpha="0.7"/>
-    <!-- Wave line 4 (right lower) -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M64,56 Q68,50 72,56 Q76,62 80,56"
-        android:strokeColor="#1DB954"
-        android:strokeWidth="1.5"
-        android:strokeLineCap="round"
-        android:strokeAlpha="0.7"/>
+        android:strokeLineJoin="round"/>
 
-    <!-- Broadcast signal arcs from top-right of A -->
-    <!-- Inner arc -->
+    <!-- A crossbar -->
     <path
         android:fillColor="#00000000"
-        android:pathData="M64,30 A8,8 0 0,1 64,38"
-        android:strokeColor="#1ED760"
-        android:strokeWidth="1.8"
+        android:pathData="M42,61 L66,61"
+        android:strokeColor="#1DB954"
+        android:strokeWidth="5.5"
         android:strokeLineCap="round"/>
-    <!-- Middle arc -->
+
+    <!-- Broadcast point at A peak -->
+    <path
+        android:fillColor="#1ED760"
+        android:pathData="M54,31m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"/>
+
+    <!-- Radio signal arc - inner -->
     <path
         android:fillColor="#00000000"
-        android:pathData="M68,27 A12,12 0 0,1 68,41"
+        android:pathData="M61,30 A5,5 0 0,1 61,38"
         android:strokeColor="#1ED760"
-        android:strokeWidth="1.6"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"/>
+
+    <!-- Radio signal arc - middle -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M64,27 A8,8 0 0,1 64,41"
+        android:strokeColor="#1ED760"
+        android:strokeWidth="2.4"
         android:strokeLineCap="round"
         android:strokeAlpha="0.8"/>
-    <!-- Outer arc -->
+
+    <!-- Radio signal arc - outer -->
     <path
         android:fillColor="#00000000"
-        android:pathData="M72,24 A16,16 0 0,1 72,44"
+        android:pathData="M67,24 A11,11 0 0,1 67,44"
         android:strokeColor="#1ED760"
-        android:strokeWidth="1.4"
+        android:strokeWidth="2.0"
         android:strokeLineCap="round"
         android:strokeAlpha="0.6"/>
 </vector>
