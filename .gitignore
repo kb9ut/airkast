@@ -33,3 +33,6 @@ app/build/
 
 # Kotlin
 .kotlin/
+
+# Xcode user data
+xcuserdata/
