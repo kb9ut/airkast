@@ -42,6 +42,9 @@ class FavoriteSyncWorker(context: Context, params: WorkerParameters) : Coroutine
         createNotificationChannel()
         try {
             setForeground(getForegroundInfo())
+        } catch (e: CancellationException) {
+            // CancellationException は IllegalStateException のサブクラスのため先に再スローする
+            throw e
         } catch (e: IllegalStateException) {
             // バックグラウンドからのフォアグラウンド昇格は Android 12 以降で失敗しうるため、失敗しても通常の実行枠で続行する
             Log.w(TAG, "フォアグラウンドに昇格できませんでした。通常の実行枠で続行します: ${e.message}")
