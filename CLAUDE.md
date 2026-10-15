@@ -96,7 +96,11 @@ Headers: X-Radiko-Authtoken: {token}
 - UIを変更するときは `MainActivity.kt` ではなく `ui/` 以下を編集する。ダウンロードボタンは `ProgramDownloadState` だけから描画する。
 - `MainViewModel` の `dateList` / `ongoingDownloadStates` / `downloadedFiles` / `skipBackward` / `skipForward` / `setPlaybackSpeed` / `userMessage` は UI が依存している。名前を変えるとビルドが壊れる。
 - お気に入り番組の自動ダウンロードは `favorites/` パッケージ。呼び出しは `AirkastApplication.onCreate` → `FavoriteSyncScheduler` → `FavoriteSyncWorker` → `FavoriteSync` → `FavoriteMatcher` / `FavoriteRepository` → `DownloadRunner`。設計と計画は `docs/superpowers/specs/` と `docs/superpowers/plans/`。
-- この機能は UI が無いため、お気に入りを追加できず休眠状態。UI の計画では必ず次を行う: (1) ★や自動DLの切り替えのたびに `FavoriteSyncScheduler.update` を呼ぶ、(2) 手動ダウンロードと Worker が同じ `getDownloadFile` のパスへ書かないよう、プロセス全体のダウンロード中レジストリを作る(現状 Worker は `HlsDownloadService.downloadStates` を読むだけ)、(3) Android 13 以降で `POST_NOTIFICATIONS` を要求する、(4) 通知に `contentIntent` を付ける。
+- UI は実装済み。お気に入りタブ(`ui/screens/FavoritesScreen.kt`、行は `ui/components/FavoriteRow.kt`)と、番組を探すの各行の★(`ProgramRow` の `onToggleFavorite`)で追加・解除・自動DLの切り替えができる。タブは お気に入り → 番組を探す → ダウンロード の 3 つ(番号は `ui/Tabs.kt`)。起動時と通知タップ(`EXTRA_OPEN_TAB`、`MainActivity` の `onCreate` と `onNewIntent`)ではお気に入りタブが開く。
+- 手動ダウンロードと Worker の書き込み衝突は `DownloadRegistry`(プロセス全体の「取得中」レジストリ。`tryClaim`/`release`)で防ぐ。`MainViewModel.onDownloadProgram` と `HlsDownloadService`、`FavoriteSync` がこれを使い、お気に入り画面の「自動取得中」表示も `DownloadRegistry.claimed` を読む。
+- `FavoritesViewModel` は★・自動DLの変更のたびに `FavoriteSyncControl.update` で定期同期のスケジュールを更新し、自動DL が ON になる操作(追加・スイッチ ON)では `syncNow` で 1 回だけ即時同期する。最新回の取得は `refresh`(タブを開くとき・アプリ復帰時に強制更新)。
+- 通知権限(Android 13 以降の `POST_NOTIFICATIONS`)は、自動DL が ON になる操作の直前に `rememberNotificationPermissionGate` で要求する。拒否されても登録と自動DL は有効で、スナックバーから通知設定へ誘導する。
+- 未確認・残る制約: 定期同期(WorkManager)の実機での長期動作とバックグラウンド実行は未確認で、手動確認が必要。Worker はフォアグラウンド昇格なしで実行枠に収まる範囲で動くため、1 回の実行で取り切れない場合は次回に持ち越される。お気に入りタブの「更新」は取得の完了を待たずにインジケータが戻る。
 - Worker は Android 12 以降ではフォアグラウンド昇格が失敗しうるため、昇格に頼らず、WorkManager の実行枠(約10分)に収まる範囲で処理する。Worker は UI と別の `AirkastClient` を使う。
 
 ## 既知の課題
