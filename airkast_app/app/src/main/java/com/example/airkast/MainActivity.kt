@@ -733,7 +733,7 @@ fun ProgramCard(
     onDownloadClick: () -> Unit
 ) {
     val isDownloading = ongoingDownloadStates.containsKey(program.id)
-    val isDownloaded = downloadedFiles.any { it.name.contains(program.id) || it.name.contains(program.startTime) }
+    val isDownloaded = isProgramDownloaded(downloadedFiles, program)
 
     Surface(
         modifier = Modifier.fillMaxWidth(),

@@ -2,6 +2,8 @@ package com.example.airkast
 
 import android.app.Application
 import android.content.SharedPreferences
+import com.example.airkast.service.HlsDownloadService
+import com.example.airkast.service.HlsDownloadService.DownloadStatus
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -9,12 +11,15 @@ import io.mockk.mockk
 import io.mockk.unmockkAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -25,7 +30,9 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 日付セレクタが日跨ぎ/復帰で更新されない問題の回帰テスト。
+ * 1) 日付セレクタが日跨ぎ/復帰で更新されない
+ * 2) ダウンロード完了後もボタンのスピナーが止まらない
+ * の回帰テスト。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModelBugfixTest {
@@ -61,6 +68,7 @@ class MainViewModelBugfixTest {
         every { app.getSharedPreferences(any(), any()) } returns prefs
         every { app.getExternalFilesDir("downloads") } returns downloadsDir
 
+        setDownloadStates(emptyMap())
         // PlayerService への接続 (Media3) は JVM テストでは行えないので何もしない
         viewModel = object : MainViewModel(app as Application) {
             override fun connectToPlayerService() {}
@@ -69,9 +77,24 @@ class MainViewModelBugfixTest {
 
     @After
     fun tearDown() {
+        setDownloadStates(emptyMap())
         unmockkAll()
         Dispatchers.resetMain()
     }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun setDownloadStates(states: Map<String, DownloadStatus>) {
+        val field = HlsDownloadService::class.java.getDeclaredField("_downloadStates")
+        field.isAccessible = true
+        (field.get(null) as MutableStateFlow<Map<String, DownloadStatus>>).value = states
+    }
+
+    private fun program(
+        id: String = "p1",
+        station: String = "TBS",
+        start: String = "20260101090000",
+        end: String = "20260101100000",
+    ) = AirkastProgram(id, station, start, end, "title", "", "", null)
 
     // ───────────── Bug 1: 日付リスト ─────────────
 
@@ -153,5 +176,72 @@ class MainViewModelBugfixTest {
 
         coVerify(exactly = 1) { client.getProgramGuide("TBS", "20260110") }
         coVerify(exactly = 1) { client.getProgramGuide("TBS", "20260111") }
+    }
+
+    // ───────────── Bug 2: ダウンロードボタンのスピナー ─────────────
+
+    @Test
+    fun ongoingDownloadStates_keepsOnlyActiveDownloads() {
+        val p = program()
+        setDownloadStates(mapOf("p1" to DownloadStatus.InProgress(p, 40)))
+        assertTrue(viewModel.ongoingDownloadStates.value.containsKey("p1"))
+
+        setDownloadStates(mapOf("p1" to DownloadStatus.Pending(p)))
+        assertTrue(viewModel.ongoingDownloadStates.value.containsKey("p1"))
+        setDownloadStates(mapOf("p1" to DownloadStatus.Muxing(p, 10)))
+        assertTrue(viewModel.ongoingDownloadStates.value.containsKey("p1"))
+    }
+
+    @Test
+    fun ongoingDownloadStates_completedErrorAndCanceledAreNotOngoing() {
+        val p1 = program(id = "p1")
+        val p2 = program(id = "p2")
+        val p3 = program(id = "p3")
+        val p4 = program(id = "p4")
+        setDownloadStates(
+            mapOf(
+                "p1" to DownloadStatus.Completed(p1, File(downloadsDir, "x.m4a")),
+                "p2" to DownloadStatus.Error(p2, "boom"),
+                "p3" to DownloadStatus.Canceled(p3),
+                "p4" to DownloadStatus.InProgress(p4, 5),
+            )
+        )
+
+        assertEquals(setOf("p4"), viewModel.ongoingDownloadStates.value.keys)
+    }
+
+    @Test
+    fun completedDownload_appearsInDownloadedFiles_andSpinnerStops() {
+        val p = program()
+        setDownloadStates(mapOf("p1" to DownloadStatus.InProgress(p, 99)))
+        assertTrue(viewModel.ongoingDownloadStates.value.containsKey("p1"))
+
+        val file = File(downloadsDir, "TBS_title_20260101090000_20260101100000.m4a").apply { writeText("x") }
+        setDownloadStates(mapOf("p1" to DownloadStatus.Completed(p, file)))
+
+        assertFalse(viewModel.ongoingDownloadStates.value.containsKey("p1"))
+        assertEquals(listOf(file), viewModel.downloadedFiles.value)
+        assertTrue(isProgramDownloaded(viewModel.downloadedFiles.value, p))
+    }
+
+    // ───────────── 再起動後 (ファイルは存在、ダウンロード状態は空) ─────────────
+
+    @Test
+    fun isProgramDownloaded_existingFileAfterRestart() {
+        val p = program()
+        val files = listOf(File("TBS_title_20260101090000_20260101100000.m4a"))
+        assertTrue(isProgramDownloaded(files, p))
+    }
+
+    @Test
+    fun isProgramDownloaded_sameStartTimeOnOtherStation_isNotDownloaded() {
+        val files = listOf(File("TBS_title_20260101090000_20260101100000.m4a"))
+        assertFalse(isProgramDownloaded(files, program(id = "q1", station = "QRR")))
+    }
+
+    @Test
+    fun isProgramDownloaded_differentTime_isNotDownloaded() {
+        val files = listOf(File("TBS_title_20260101090000_20260101100000.m4a"))
+        assertFalse(isProgramDownloaded(files, program(start = "20260101100000", end = "20260101110000")))
     }
 }

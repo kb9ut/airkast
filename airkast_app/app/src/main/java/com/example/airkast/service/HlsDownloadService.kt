@@ -162,10 +162,12 @@ class HlsDownloadService : Service() {
 
         val outputFile = getDownloadFile(this, program)
         val job = serviceScope.launch {
+            var semaphoreAcquired = false
             try {
                 // Semaphore取得を待つ（最大同時実行数に達している場合はここでサスペンド）
                 Log.d(TAG, "Waiting for semaphore: ${program.title}")
                 downloadSemaphore.acquire()
+                semaphoreAcquired = true
                 Log.d(TAG, "Semaphore acquired, starting: ${program.title}")
 
                 // ダウンロード開始
@@ -216,7 +218,8 @@ class HlsDownloadService : Service() {
                 if (outputFile.exists()) outputFile.delete()
                 updateState(program.id, DownloadStatus.Error(program, e.message ?: "Unknown error"))
             } finally {
-                downloadSemaphore.release()
+                // 取得前にキャンセルされた場合は release しない (許可数超過で IllegalStateException になる)
+                if (semaphoreAcquired) downloadSemaphore.release()
                 downloadJobs.remove(program.id)
                 updateNotification()
                 // 全ジョブ完了ならサービス停止

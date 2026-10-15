@@ -137,10 +137,12 @@ open class MainViewModel(
         authenticateAndFetchStations()
         viewModelScope.launch {
             HlsDownloadService.downloadStates.collect { states ->
-                _ongoingDownloadStates.value = states
                 if (states.any { it.value is HlsDownloadService.DownloadStatus.Completed }) {
                     scanForDownloads()
                 }
+                // 完了/失敗/中止の状態は「進行中」ではないので除外する。
+                // (残したままだとダウンロードボタンのスピナーが止まらない)
+                _ongoingDownloadStates.value = states.filterValues { it.isActive() }
             }
         }
 
@@ -689,4 +691,21 @@ internal fun buildDateList(now: Date): List<Date> = List(7) { i ->
         time = now
         add(java.util.Calendar.DAY_OF_YEAR, -(6 - i))
     }.time
+}
+
+/** ダウンロードが進行中（待機・ダウンロード・変換中）かどうか。 */
+internal fun HlsDownloadService.DownloadStatus.isActive(): Boolean =
+    this is HlsDownloadService.DownloadStatus.Pending ||
+        this is HlsDownloadService.DownloadStatus.InProgress ||
+        this is HlsDownloadService.DownloadStatus.Muxing
+
+/**
+ * [program] のダウンロード済みファイルが [files] に存在するか。
+ * ファイル名は `<stationId>_<title>_<start>_<end>.m4a` (HlsDownloadService.getDownloadFile 参照)。
+ * 放送局違いで開始時刻が同じ番組を誤判定しないよう、放送局IDと開始・終了時刻の両方で照合する。
+ */
+internal fun isProgramDownloaded(files: List<File>, program: AirkastProgram): Boolean {
+    val prefix = "${program.stationId.ifEmpty { "unknown" }}_"
+    val suffix = "_${program.startTime}_${program.endTime}.m4a"
+    return files.any { it.name.startsWith(prefix) && it.name.endsWith(suffix) }
 }
