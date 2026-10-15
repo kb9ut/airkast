@@ -93,6 +93,36 @@ class PlayerService : MediaLibraryService() {
 
         private const val STREAM_USER_AGENT =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        /** 再生エラーの原因 ([cause] のメッセージ/型) からユーザー向けメッセージを作る。 */
+        internal fun toUserMessage(errorMessage: String?, cause: Throwable?): String = when {
+            cause?.message?.contains("403") == true ->
+                "エリア外エラー: この番組はお住まいの地域では再生できません"
+            cause?.message?.contains("404") == true ->
+                "番組が見つかりません"
+            cause?.message?.contains("401") == true ->
+                "認証エラー: アプリを再起動してください"
+            cause is java.net.UnknownHostException ->
+                "ネットワークエラー: インターネット接続を確認してください"
+            cause is java.net.SocketTimeoutException ->
+                "タイムアウト: 通信に時間がかかっています"
+            else ->
+                "再生エラー: ${errorMessage ?: "不明なエラー"}"
+        }
+
+        /**
+         * 番組の長さ ([programDurationMs]) か ExoPlayer の長さ ([exoDurationMs]) のうち、
+         * 使えるものを優先順に返す。どちらも使えなければ null。
+         */
+        internal fun knownDurationMs(programDurationMs: Long, exoDurationMs: Long): Long? = when {
+            programDurationMs > 0 -> programDurationMs
+            exoDurationMs != C.TIME_UNSET && exoDurationMs > 0 -> exoDurationMs
+            else -> null
+        }
+
+        /** 位置と長さがともに有効なときだけ再生位置を保存する。 */
+        internal fun shouldSavePosition(positionMs: Long, durationMs: Long): Boolean =
+            positionMs > 0 && durationMs > 0
     }
 
     override fun onCreate() {
@@ -182,23 +212,8 @@ class PlayerService : MediaLibraryService() {
 
         override fun onPlayerError(error: PlaybackException) {
             Log.e(TAG, "Player error: ${error.message}", error)
-            emitMessage(toUserMessage(error))
+            emitMessage(toUserMessage(error.message, error.cause))
         }
-    }
-
-    private fun toUserMessage(error: PlaybackException): String = when {
-        error.cause?.message?.contains("403") == true ->
-            "エリア外エラー: この番組はお住まいの地域では再生できません"
-        error.cause?.message?.contains("404") == true ->
-            "番組が見つかりません"
-        error.cause?.message?.contains("401") == true ->
-            "認証エラー: アプリを再起動してください"
-        error.cause is java.net.UnknownHostException ->
-            "ネットワークエラー: インターネット接続を確認してください"
-        error.cause is java.net.SocketTimeoutException ->
-            "タイムアウト: 通信に時間がかかっています"
-        else ->
-            "再生エラー: ${error.message ?: "不明なエラー"}"
     }
 
     private fun emitMessage(message: String) {
@@ -211,7 +226,7 @@ class PlayerService : MediaLibraryService() {
      * 常にシーク/スキップコマンドを「利用可能」として報告するプレーヤー。
      * ストリーミング/ADTSでは ExoPlayer がシーク可否を正しく返さないことがあるため。
      */
-    private class AlwaysSeekablePlayer(private val underlyingPlayer: Player) : ForwardingPlayer(underlyingPlayer) {
+    internal class AlwaysSeekablePlayer(private val underlyingPlayer: Player) : ForwardingPlayer(underlyingPlayer) {
         override fun getAvailableCommands(): Player.Commands {
             return Player.Commands.Builder()
                 .addAllCommands()
@@ -279,7 +294,7 @@ class PlayerService : MediaLibraryService() {
         val position = currentPlayer.currentPosition
         val duration = currentPlayer.duration
 
-        if (position > 0 && duration > 0) {
+        if (shouldSavePosition(position, duration)) {
             positionManager.savePosition(mediaId, position, duration)
         }
     }
@@ -466,14 +481,9 @@ class PlayerService : MediaLibraryService() {
      * 3. MediaMetadataRetriever (AAC-ADTSでは不正確なことが多い)
      */
     private fun resolveDurationMs(): Long {
-        if (programDurationMs > 0) {
-            Log.d(TAG, "get_duration: using programDurationMs=$programDurationMs")
-            return programDurationMs
-        }
-
         val exoDuration = player?.duration ?: C.TIME_UNSET
-        Log.d(TAG, "get_duration: exoplayer duration=$exoDuration")
-        if (exoDuration != C.TIME_UNSET && exoDuration > 0) return exoDuration
+        Log.d(TAG, "get_duration: programDurationMs=$programDurationMs, exoplayer duration=$exoDuration")
+        knownDurationMs(programDurationMs, exoDuration)?.let { return it }
 
         // フォールバック: MediaMetadataRetriever (通常は不正確)
         val filePath = currentFilePath ?: return C.TIME_UNSET
