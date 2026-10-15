@@ -62,19 +62,11 @@
     <string name="player_skip_forward">%1$d秒進む</string>
     <string name="player_speed">再生速度</string>
     <string name="player_speed_value">%1$sx</string>
-    <string name="player_turbo">ターボ</string>
-    <string name="player_turbo_value">%1$dx</string>
-    <string name="player_turbo_description">ターボ。長押しで%1$d倍速、タップで設定</string>
-    <string name="player_turbo_action">倍速を設定</string>
 
     <!-- ダイアログ -->
     <string name="dialog_close">閉じる</string>
     <string name="dialog_cancel">キャンセル</string>
     <string name="dialog_save">保存</string>
-    <string name="turbo_title">ターボ倍速設定</string>
-    <string name="turbo_body">長押し中の再生速度を設定します。\nCMスキップなどに便利です。</string>
-    <string name="turbo_presets">プリセット</string>
-    <string name="turbo_slider">ターボ倍速</string>
     <string name="chunk_title">ダウンロード設定</string>
     <string name="chunk_body">ダウンロード時の分割サイズを選択してください。</string>
     <string name="chunk_safe">安全 (15秒)</string>

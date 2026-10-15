@@ -85,7 +85,7 @@ import com.example.airkast.ui.theme.pressScale
  * ミニプレイヤー + 展開プレイヤー。
  *
  * 画面下部(ナビゲーションバーの直上)に浮かぶカード。折りたたみ時はアートワーク風タイル・タイトル・
- * 再生/一時停止・細い進捗線だけ。タップで展開し、シーク・スキップ・速度・ターボが現れる。
+ * 再生/一時停止・細い進捗線だけ。タップで展開し、シーク・スキップ・再生速度が現れる。
  * リストを押し下げないよう、コンテンツ領域に重ねて描画する(重なる高さは
  * [onReservedHeightChange] で呼び出し側に通知し、リストの下余白に使う)。
  */
@@ -100,12 +100,9 @@ fun PlayerOverlay(
     val position by viewModel.playbackPosition.collectAsState()
     val duration by viewModel.playbackDuration.collectAsState()
     val speed by viewModel.playbackSpeed.collectAsState()
-    val turboSpeed by viewModel.turboSpeed.collectAsState()
-    val isTurboActive by viewModel.isTurboActive.collectAsState()
 
     val visible = mediaMetadata != null || duration != 0L
     var expanded by rememberSaveable { mutableStateOf(false) }
-    var showTurboDialog by remember { mutableStateOf(false) }
     val density = LocalDensity.current
 
     LaunchedEffect(visible) {
@@ -175,9 +172,6 @@ fun PlayerOverlay(
                             position = position,
                             duration = duration,
                             speed = speed,
-                            turboSpeed = turboSpeed,
-                            isTurboActive = isTurboActive,
-                            onTurboSettings = { showTurboDialog = true },
                         )
                     }
                 }
@@ -185,13 +179,6 @@ fun PlayerOverlay(
         }
     }
 
-    if (showTurboDialog) {
-        TurboSpeedDialog(
-            currentSpeed = turboSpeed,
-            onSpeedSelected = { viewModel.setTurboSpeed(it) },
-            onDismiss = { showTurboDialog = false },
-        )
-    }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -304,9 +291,6 @@ private fun ExpandedControls(
     position: Long,
     duration: Long,
     speed: Float,
-    turboSpeed: Float,
-    isTurboActive: Boolean,
-    onTurboSettings: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     var dragValue by remember { mutableStateOf<Float?>(null) }
@@ -322,7 +306,7 @@ private fun ExpandedControls(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = Spacing.xl, end = Spacing.xl, bottom = Spacing.xl),
+            .padding(start = Spacing.l, end = Spacing.l, bottom = Spacing.l),
     ) {
         // シークバー
         Slider(
@@ -361,36 +345,56 @@ private fun ExpandedControls(
 
         Spacer(Modifier.height(Spacing.s))
 
-        // 再生コントロール
+        // 再生/一時停止(中央)と再生速度(左)
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SkipButton(seconds = 60, label = "60", isForward = false) { viewModel.skipBackward(60) }
-            SkipButton(seconds = 30, label = "30", isForward = false) { viewModel.skipBackward(30) }
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                SpeedSelector(speed = speed, onSpeedSelected = { viewModel.setPlaybackSpeed(it) })
+            }
             PlayPauseButton(isPlaying = isPlaying, onClick = { viewModel.playPause() }, size = 72.dp)
-            SkipButton(seconds = 60, label = "60", isForward = true) { viewModel.skipForward(60) }
-            SkipButton(seconds = 120, label = "2m", isForward = true) { viewModel.skipForward(120) }
+            Spacer(Modifier.weight(1f))
         }
 
-        Spacer(Modifier.height(Spacing.l))
+        Spacer(Modifier.height(Spacing.m))
 
-        // 速度 / ターボ
+        // スキップ: 左が戻る(60/30/15秒)、右が進む(60秒/2分/3分)。各ボタン 48dp 以上
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
         ) {
-            SpeedSelector(speed = speed, onSpeedSelected = { viewModel.setPlaybackSpeed(it) })
-            TurboButton(
-                turboSpeed = turboSpeed,
-                isTurboActive = isTurboActive,
-                onTurboStart = { viewModel.startTurbo() },
-                onTurboStop = { viewModel.stopTurbo() },
-                onTap = onTurboSettings,
-            )
+            SkipGroup(modifier = Modifier.weight(1f)) {
+                SkipButton(seconds = 60, label = "-60", isForward = false, modifier = Modifier.weight(1f)) { viewModel.skipBackward(60) }
+                SkipButton(seconds = 30, label = "-30", isForward = false, modifier = Modifier.weight(1f)) { viewModel.skipBackward(30) }
+                SkipButton(seconds = 15, label = "-15", isForward = false, modifier = Modifier.weight(1f)) { viewModel.skipBackward(15) }
+            }
+            SkipGroup(modifier = Modifier.weight(1f)) {
+                SkipButton(seconds = 60, label = "+60", isForward = true, modifier = Modifier.weight(1f)) { viewModel.skipForward(60) }
+                SkipButton(seconds = 120, label = "+2m", isForward = true, modifier = Modifier.weight(1f)) { viewModel.skipForward(120) }
+                SkipButton(seconds = 180, label = "+3m", isForward = true, modifier = Modifier.weight(1f)) { viewModel.skipForward(180) }
+            }
         }
+    }
+}
+
+/** スキップボタンを束ねるトーナルなピル。 */
+@Composable
+private fun SkipGroup(
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+) {
+    Surface(
+        modifier = modifier,
+        shape = PillShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            content = content,
+        )
     }
 }
 
@@ -504,6 +508,7 @@ private fun SkipButton(
     seconds: Int,
     label: String,
     isForward: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -514,11 +519,11 @@ private fun SkipButton(
     Surface(
         onClick = onClick,
         interactionSource = interactionSource,
-        modifier = Modifier
+        modifier = modifier
             .defaultMinSize(minWidth = MinTouchTarget, minHeight = MinTouchTarget)
             .pressScale(interactionSource)
             .semantics { contentDescription = description },
-        shape = MaterialTheme.shapes.medium,
+        shape = PillShape,
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
     ) {

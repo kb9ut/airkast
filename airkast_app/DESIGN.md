@@ -24,7 +24,7 @@ Material 3 Expressive の考え方(大きな角丸、強弱のはっきりした
 | primary / onPrimary | `#4355B9` / `#FFFFFF` | `#B9C3FF` / `#08218A` | 主操作(再生ボタン、選択中の日付) |
 | primaryContainer / on | `#DDE1FF` / `#00164E` | `#293CA0` / `#DDE1FF` | 取得済み、再生アイコン、強調コンテナ |
 | secondaryContainer / on | `#DFE1F9` / `#171B2C` | `#424659` / `#DFE1F9` | 選択中ナビ、フィルタチップ |
-| tertiary / container | `#8F4C38` / `#FFDBD0` | `#FFB5A0` / `#723523` | 変換中、ターボ、再生中アクセント |
+| tertiary / container | `#8F4C38` / `#FFDBD0` | `#FFB5A0` / `#723523` | 変換中、再生中アクセント |
 | error / container | `#BA1A1A` / `#FFDAD6` | `#FFB4AB` / `#93000A` | 失敗、中止、警告 |
 | surface 系 | `#FBF8FF`(+ container 5 段階) | `#121318`(+ container 5 段階) | 背景〜カード。elevation は影でなく surfaceContainer* の段階で表す |
 | onSurface / onSurfaceVariant | `#1B1B21` / `#45464F` | `#E3E1E9` / `#C6C5D0` | 本文 / 補助テキスト |
@@ -64,7 +64,7 @@ Material 3 Expressive の考え方(大きな角丸、強弱のはっきりした
 - `effectsSpring`(減衰比 1.0, stiffness 1600): 色、透明度、進捗値。
 - 押下: 対象を 0.96 倍へバネで縮め、離すと戻る(`pressScale`)+ リップル。
 - 状態遷移: ダウンロードボタンは `AnimatedContent` でアイコンが拡縮クロスフェード。取得済みはバネで「ポン」と現れる。再生/一時停止アイコンもクロスフェード。
-- 画面切替: タブ方向に応じた水平スライド + フェード。ミニプレイヤー ⇄ 展開表示は `animateContentSize`(spatial spring)。再生中はイコライザー風の 3 本バーのみ無限アニメーション。
+- 画面切替: タブ方向に応じた水平スライド + フェード。ミニプレイヤー ⇄ 展開表示は `expandVertically` / `shrinkVertically`(spatial spring)。再生中はイコライザー風の 3 本バーのみ無限アニメーション。
 - Compose の標準挙動により、システムの「アニメーション削除」設定(`animator_duration_scale = 0`)に従う。
 
 ## 7. コンポーネント一覧
@@ -82,10 +82,9 @@ Material 3 Expressive の考え方(大きな角丸、強弱のはっきりした
 | `DownloadProgressCard` | ダウンロード画面の進行中カード(ステータス文、線形進捗、中止) |
 | `DownloadedFileRow` | 再生アイコン + タイトル + 局/日時 + 削除 |
 | `MiniPlayer` | 浮遊カード。タップで展開。タイトル、イコライザー、再生/一時停止、細い進捗線 |
-| `ExpandedPlayer` | シークバー、時間、±スキップ、再生/一時停止(大)、速度、ターボ(長押し) |
-| `TurboButton` | 長押しでN倍速、タップで設定(既存の操作を維持、セマンティクス付き) |
+| `ExpandedPlayer` | シークバー、時間、再生/一時停止(大)、再生速度、スキップ(戻し 60/30/15 秒・送り 60秒/2分/3分 を 2 つのピル状グループに分け、各ボタン 48dp 以上) |
 | `StateMessage` | 空/エラー/認証の状態表示(アイコン + 見出し + 説明 + アクション) |
-| ダイアログ | エリア選択 / ダウンロード設定 / ターボ設定(M3 既定の `surfaceContainerHigh`、選択行は 48dp 以上のラジオ行) |
+| ダイアログ | エリア選択 / ダウンロード設定(M3 既定の `surfaceContainerHigh`、選択行は 48dp 以上のラジオ行) |
 | ランチャーアイコン | 新パレットのインディゴ背景 + 白の「A」+ 電波アーク。Android 13 のテーマアイコン(monochrome)対応 |
 
 ## 8. アクセシビリティ

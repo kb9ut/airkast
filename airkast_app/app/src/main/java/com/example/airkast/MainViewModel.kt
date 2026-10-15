@@ -111,15 +111,6 @@ open class MainViewModel(
 
     private var positionPollingJob: Job? = null
 
-    // --- Turbo (長押し高速再生) ---
-    private val _turboSpeed = MutableStateFlow(50f) // デフォルト50倍速
-    val turboSpeed: StateFlow<Float> = _turboSpeed.asStateFlow()
-
-    private val _isTurboActive = MutableStateFlow(false)
-    val isTurboActive: StateFlow<Boolean> = _isTurboActive.asStateFlow()
-
-    private var preTurboSpeed: Float = 1.0f // ターボ開始前の速度を保持
-
     // --- ダウンロード分割サイズ設定 ---
     private val _downloadChunkSize = MutableStateFlow(60) // デフォルト推奨(60秒)
     val downloadChunkSize: StateFlow<Int> = _downloadChunkSize.asStateFlow()
@@ -128,7 +119,6 @@ open class MainViewModel(
         private const val PREFS_NAME = "airkast_prefs"
         private const val KEY_LAST_STATION_ID = "last_station_id"
         private const val KEY_LAST_TIME_FILTER = "last_time_filter"
-        private const val KEY_TURBO_SPEED = "turbo_speed"
         private const val KEY_DOWNLOAD_CHUNK_SIZE = "download_chunk_size"
 
         // PlayerServiceからのduration取得リトライ設定
@@ -187,7 +177,6 @@ open class MainViewModel(
             }
         }
 
-        _turboSpeed.value = prefs.getFloat(KEY_TURBO_SPEED, 50f)
         _downloadChunkSize.value = prefs.getInt(KEY_DOWNLOAD_CHUNK_SIZE, 60)
     }
 
@@ -196,7 +185,6 @@ open class MainViewModel(
         prefs.edit().apply {
             putString(KEY_LAST_STATION_ID, _selectedStationId.value)
             putString(KEY_LAST_TIME_FILTER, _selectedTimeFilter.value.name)
-            putFloat(KEY_TURBO_SPEED, _turboSpeed.value)
             putInt(KEY_DOWNLOAD_CHUNK_SIZE, _downloadChunkSize.value)
             apply()
         }
@@ -362,40 +350,6 @@ open class MainViewModel(
 
     fun setPlaybackSpeed(speed: Float) {
         mediaController?.setPlaybackSpeed(speed)
-    }
-
-    // --- Turbo (長押し高速再生) ---
-
-    /**
-     * ターボ倍速の設定値を変更します (10〜200倍)。
-     */
-    fun setTurboSpeed(speed: Float) {
-        _turboSpeed.value = speed.coerceIn(10f, 200f)
-        savePreferences()
-    }
-
-    /**
-     * ターボモード開始: 現在の再生速度を保存し、turboSpeed に切り替える。
-     * ボタンを押している間だけ呼ばれる想定。
-     */
-    fun startTurbo() {
-        val controller = mediaController ?: return
-        if (_isTurboActive.value) return
-        preTurboSpeed = controller.playbackParameters.speed
-        _isTurboActive.value = true
-        controller.setPlaybackSpeed(_turboSpeed.value)
-        Log.d(TAG, "Turbo START: ${_turboSpeed.value}x (was ${preTurboSpeed}x)")
-    }
-
-    /**
-     * ターボモード終了: 保存していた元の再生速度に戻す。
-     */
-    fun stopTurbo() {
-        val controller = mediaController ?: return
-        if (!_isTurboActive.value) return
-        _isTurboActive.value = false
-        controller.setPlaybackSpeed(preTurboSpeed)
-        Log.d(TAG, "Turbo STOP: restored ${preTurboSpeed}x")
     }
 
     fun playPause() {

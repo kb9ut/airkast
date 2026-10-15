@@ -22,7 +22,7 @@ radikoのタイムフリー番組をダウンロード・再生する個人利�
 - **認証・エリア:** 起動時にPC版認証を実行し、IPアドレスからエリアを自動判定。エリアは手動変更も可能 (`AreaSelectionDialog` に定義した12エリア)。
 - **番組表:** エリア内の放送局を選択 → 過去7日間から日付を選択 → 時間帯フィルター (早朝 5-9 / 昼 9-17 / 夜 17-24 / 深夜 24-29) で絞り込み。アプリを開いたまま日付が変わった場合は日付リストを更新する。選択した放送局・時間帯は `SharedPreferences` に保存される。
 - **ダウンロード:** 放送終了済みの番組のみ対象。`HlsDownloadService` (Foreground Service, `dataSync`) がバックグラウンドで実行し、通知に進捗を表示する。同時実行は最大3件。分割サイズ (15秒 / 60秒(推奨・既定) / 5分 / 一括) を選択可能。
-- **再生:** ダウンロード済みファイルを `PlayerService` (MediaLibraryService + ExoPlayer) で再生。倍速 (0.5x〜2.0x)、スキップ (60秒戻し / 30秒戻し / 60秒送り / 2分送り)、長押しターボ再生 (10〜200倍、既定50倍)、再生位置の自動保存・復元に対応。ストリーミング再生 (`MainViewModel.playStream` → `PlayerCommands.PLAY_STREAM`) の実装もある。
+- **再生:** ダウンロード済みファイルを `PlayerService` (MediaLibraryService + ExoPlayer) で再生。倍速 (0.5x〜2.0x)、スキップ (戻し: 60秒 / 30秒 / 15秒、送り: 60秒 / 2分 / 3分)、再生位置の自動保存・復元に対応。ストリーミング再生 (`MainViewModel.playStream` → `PlayerCommands.PLAY_STREAM`) の実装もある。
 - **削除:** ダウンロードタブから個別に削除。
 
 ## 3. 開発環境とビルド
