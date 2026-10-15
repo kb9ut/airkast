@@ -45,8 +45,8 @@ class HlsDownloadService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "HlsDownloadServiceChannel"
         private const val MAX_CONCURRENT_DOWNLOADS = 3
-        private const val MAX_TRACKED_STATES = 50
-        private const val KEPT_FINISHED_STATES = 20
+        internal const val MAX_TRACKED_STATES = 50
+        internal const val KEPT_FINISHED_STATES = 20
 
         // ダウンロード状態の管理 (Static access for ViewModel)
         private val _downloadStates = MutableStateFlow<Map<String, DownloadStatus>>(emptyMap())
@@ -66,6 +66,38 @@ class HlsDownloadService : Service() {
             File(finalFile.absolutePath + ".tmp_mux"),
             File(finalFile.absolutePath + ".raw"),
         )
+
+        /** [files] をすべて削除する。存在しないファイルは無視する。失敗/キャンセル時の掃除に使う。 */
+        fun deleteAll(files: List<File>) {
+            files.forEach { f -> if (f.exists()) f.delete() }
+        }
+
+        /**
+         * 状態数が [MAX_TRACKED_STATES] を超えたとき、完了済みの状態を古い順に捨てて
+         * [KEPT_FINISHED_STATES] 件まで減らす。進行中の状態は捨てない。
+         */
+        fun pruneStates(states: Map<String, DownloadStatus>): Map<String, DownloadStatus> {
+            if (states.size <= MAX_TRACKED_STATES) return states
+            val finishedKeys = states.filterValues { it.isFinished() }.keys.toList()
+            if (finishedKeys.size <= KEPT_FINISHED_STATES) return states
+            val dropKeys = finishedKeys.take(finishedKeys.size - KEPT_FINISHED_STATES).toSet()
+            return states.filterKeys { it !in dropKeys }
+        }
+
+        /** 完了・失敗・中止の状態をすべて取り除く。 */
+        fun withoutFinished(states: Map<String, DownloadStatus>): Map<String, DownloadStatus> =
+            states.filterValues { !it.isFinished() }
+
+        /** 通知に表示する、進行中ダウンロードごとの 1 行説明。完了済みの状態は含めない。 */
+        fun describeActive(statuses: Collection<DownloadStatus>): List<String> =
+            statuses.mapNotNull { status ->
+                when (status) {
+                    is DownloadStatus.Pending -> "${status.program.title}: 待機中"
+                    is DownloadStatus.InProgress -> "${status.program.title}: DL ${status.progress}%"
+                    is DownloadStatus.Muxing -> "${status.program.title}: 変換 ${status.progress}%"
+                    else -> null
+                }
+            }
 
         data class ParsedFileName(
             val stationId: String,
@@ -111,6 +143,13 @@ class HlsDownloadService : Service() {
     }
 
     sealed class DownloadStatus(open val program: AirkastProgram) {
+        /** 完了・失敗・中止のいずれか (これ以上進行しない状態)。 */
+        fun isFinished(): Boolean =
+            this is Completed || this is Error || this is Canceled
+
+        /** 待機中・ダウンロード中・変換中のいずれか。 */
+        fun isActive(): Boolean = !isFinished()
+
         data class Pending(override val program: AirkastProgram) : DownloadStatus(program)
         data class InProgress(override val program: AirkastProgram, val progress: Int) : DownloadStatus(program)
         data class Muxing(override val program: AirkastProgram, val progress: Int) : DownloadStatus(program)
@@ -118,9 +157,6 @@ class HlsDownloadService : Service() {
         data class Error(override val program: AirkastProgram, val message: String) : DownloadStatus(program)
         data class Canceled(override val program: AirkastProgram) : DownloadStatus(program)
     }
-
-    private fun DownloadStatus.isFinished(): Boolean =
-        this is DownloadStatus.Completed || this is DownloadStatus.Error || this is DownloadStatus.Canceled
 
     override fun onCreate() {
         super.onCreate()
@@ -174,11 +210,11 @@ class HlsDownloadService : Service() {
                 runDownload(program, chunkSizeSeconds, outputFile)
                 updateState(program.id, DownloadStatus.Completed(program, outputFile))
             } catch (e: CancellationException) {
-                if (outputFile.exists()) outputFile.delete()
+                deleteAll(partialFiles(outputFile))
                 updateState(program.id, DownloadStatus.Canceled(program))
             } catch (e: Exception) {
                 Log.e(TAG, "Download failed: ${program.title}: ${e.message}", e)
-                if (outputFile.exists()) outputFile.delete()
+                deleteAll(partialFiles(outputFile))
                 updateState(program.id, DownloadStatus.Error(program, e.message ?: "Unknown error"))
             } finally {
                 // 取得前にキャンセルされた場合は release しない (許可数超過で IllegalStateException になる)
@@ -235,7 +271,7 @@ class HlsDownloadService : Service() {
 
         // 関連ファイルのクリーンアップ
         val finalFile = getDownloadFile(this, program)
-        partialFiles(finalFile).forEach { f -> if (f.exists()) f.delete() }
+        deleteAll(partialFiles(finalFile))
 
         updateNotification()
         if (downloadJobs.isEmpty()) {
@@ -244,28 +280,16 @@ class HlsDownloadService : Service() {
     }
 
     private fun updateState(programId: String, status: DownloadStatus) {
-        val currentMap = _downloadStates.value.toMutableMap()
-        currentMap[programId] = status
-
-        // Prune if map exceeds threshold
-        if (currentMap.size > MAX_TRACKED_STATES) {
-            val finishedStates = currentMap.filterValues { it.isFinished() }.keys.toList()
-            if (finishedStates.size > KEPT_FINISHED_STATES) {
-                finishedStates.take(finishedStates.size - KEPT_FINISHED_STATES).forEach { currentMap.remove(it) }
-            }
-        }
-
-        _downloadStates.value = currentMap
+        _downloadStates.value = pruneStates(_downloadStates.value + (programId to status))
     }
 
     /** サービス起動時、実行中のダウンロードがなければ完了済みの状態を破棄します。 */
     private fun pruneDownloadStates() {
         if (downloadJobs.isEmpty()) {
-            val currentMap = _downloadStates.value.toMutableMap()
-            val finishedKeys = currentMap.filterValues { it.isFinished() }.keys
-            if (finishedKeys.isNotEmpty()) {
-                finishedKeys.forEach { currentMap.remove(it) }
-                _downloadStates.value = currentMap
+            val current = _downloadStates.value
+            val remaining = withoutFinished(current)
+            if (remaining.size != current.size) {
+                _downloadStates.value = remaining
             }
         }
     }
@@ -283,14 +307,7 @@ class HlsDownloadService : Service() {
         val notification = if (activeCount > 0) {
             val progressStates = _downloadStates.value.filter { it.key in downloadJobs.keys }
             // アクティブなダウンロードの概要を構築
-            val activeDescriptions = progressStates.entries.mapNotNull { (_, status) ->
-                when (status) {
-                    is DownloadStatus.Pending -> "${status.program.title}: 待機中"
-                    is DownloadStatus.InProgress -> "${status.program.title}: DL ${status.progress}%"
-                    is DownloadStatus.Muxing -> "${status.program.title}: 変換 ${status.progress}%"
-                    else -> null
-                }
-            }
+            val activeDescriptions = describeActive(progressStates.values)
             val title = "ダウンロード中 (${activeCount}件)"
             val text = activeDescriptions.firstOrNull() ?: "処理中..."
 
