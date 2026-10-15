@@ -13,15 +13,13 @@ import androidx.core.app.NotificationCompat
 import com.example.airkast.AirkastApplication
 import com.example.airkast.AirkastClient
 import com.example.airkast.AirkastProgram
-import com.example.airkast.HlsDownloader
+import com.example.airkast.DownloadRunner
 import com.example.airkast.getParcelableExtraCompat
-import com.example.airkast.radikoTimestampFormat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Semaphore
 import java.io.File
-import java.util.Date
 
 private const val TAG = "HlsDownloadService"
 
@@ -47,7 +45,6 @@ class HlsDownloadService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "HlsDownloadServiceChannel"
         private const val MAX_CONCURRENT_DOWNLOADS = 3
-        private const val DEFAULT_CHUNK_SIZE_SECONDS = 60
         private const val MAX_TRACKED_STATES = 50
         private const val KEPT_FINISHED_STATES = 20
 
@@ -130,7 +127,7 @@ class HlsDownloadService : Service() {
         when (intent?.action) {
             ACTION_START_DOWNLOAD -> {
                 val program = intent.getParcelableExtraCompat<AirkastProgram>(EXTRA_PROGRAM)
-                val chunkSize = intent.getIntExtra(EXTRA_CHUNK_SIZE, DEFAULT_CHUNK_SIZE_SECONDS)
+                val chunkSize = intent.getIntExtra(EXTRA_CHUNK_SIZE, DownloadRunner.DEFAULT_CHUNK_SIZE_SECONDS)
                 program?.let { startDownload(it, chunkSize) }
             }
             ACTION_CANCEL_DOWNLOAD -> {
@@ -196,33 +193,18 @@ class HlsDownloadService : Service() {
         updateState(program.id, DownloadStatus.InProgress(program, 0))
         updateNotification()
 
-        val format = radikoTimestampFormat()
-        val startTime = format.parse(program.startTime)?.time ?: 0L
-        val endTime = format.parse(program.endTime)?.time ?: 0L
-
-        if (startTime == 0L || endTime == 0L || startTime >= endTime) {
-            throw Exception("Invalid program duration: start=$startTime, end=$endTime")
-        }
-
-        val downloadLsid = client.generateNewLsid()
-
-        HlsDownloader(client.client).downloadChunked(
+        DownloadRunner(client).run(
+            program = program,
             outputFile = outputFile,
-            startTime = startTime,
-            endTime = endTime,
-            chunkDurationSeconds = chunkSizeSeconds,
-            authToken = client.authToken ?: "",
-            urlGenerator = { s, e ->
-                client.generateHlsUrl(program, format.format(Date(s)), format.format(Date(e)), downloadLsid)
-            },
-            onProgress = { floatProgress ->
-                updateState(program.id, DownloadStatus.InProgress(program, (floatProgress * 100).toInt()))
+            chunkSizeSeconds = chunkSizeSeconds,
+            onProgress = { percent ->
+                updateState(program.id, DownloadStatus.InProgress(program, percent))
                 updateNotification()
             },
-            onMuxingProgress = { floatProgress ->
-                updateState(program.id, DownloadStatus.Muxing(program, (floatProgress * 100).toInt()))
+            onMuxingProgress = { percent ->
+                updateState(program.id, DownloadStatus.Muxing(program, percent))
                 updateNotification()
-            }
+            },
         )
     }
 
