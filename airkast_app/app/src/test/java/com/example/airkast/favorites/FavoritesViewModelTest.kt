@@ -265,4 +265,68 @@ class FavoritesViewModelTest {
             vm.rows.value.first { it.favorite.stationId == "QRR" }.status,
         )
     }
+
+    @Test
+    fun forcedRefreshThatFailsEverywhereKeepsTheCachedRow() {
+        var offline = false
+        val guides = FakeGuides { station, date ->
+            if (offline) throw java.io.IOException("offline")
+            if (date == "20260124") listOf(prog(station = station)) else emptyList()
+        }
+        val vm = viewModel(guides)
+        vm.addFavorite("TBS", "アフター6")
+        val before = vm.rows.value.single()
+        assertEquals(FavoriteRowStatus.LOADED, before.status)
+
+        offline = true
+        vm.refresh(force = true)
+
+        val after = vm.rows.value.single()
+        assertEquals(FavoriteRowStatus.LOADED, after.status)
+        assertEquals(before.latest, after.latest)
+    }
+
+    @Test
+    fun partialFailureThatWouldYieldAnOlderEpisodeKeepsTheCachedNewerOne() {
+        var degraded = false
+        val older = prog(start = "20260123220000", end = "20260123230000")
+        val guides = FakeGuides { station, date ->
+            when {
+                // 2 回目は最新回の日(24 日)だけ取得に失敗し、23 日の古い回しか見つからない
+                degraded && date == "20260124" -> throw java.io.IOException("flaky")
+                degraded && date == "20260123" -> listOf(older)
+                !degraded && date == "20260124" -> listOf(prog(station = station))
+                else -> emptyList()
+            }
+        }
+        val vm = viewModel(guides)
+        vm.addFavorite("TBS", "アフター6")
+        assertEquals(prog().id, vm.rows.value.single().latest?.id)
+
+        degraded = true
+        vm.refresh(force = true)
+
+        assertEquals(prog().id, vm.rows.value.single().latest?.id)
+    }
+
+    @Test
+    fun partialFailureThatFindsANewerEpisodeUpdatesTheRow() {
+        var second = false
+        val newer = prog(start = "20260125000000", end = "20260125010000")
+        val guides = FakeGuides { station, date ->
+            when {
+                second && date == "20260123" -> throw java.io.IOException("flaky")
+                second && date == "20260125" -> listOf(newer)
+                date == "20260124" -> listOf(prog(station = station))
+                else -> emptyList()
+            }
+        }
+        val vm = viewModel(guides)
+        vm.addFavorite("TBS", "アフター6")
+
+        second = true
+        vm.refresh(force = true)
+
+        assertEquals(newer.id, vm.rows.value.single().latest?.id)
+    }
 }

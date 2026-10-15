@@ -111,16 +111,26 @@ open class FavoritesViewModel(
                         Log.w(TAG, "番組表の取得に失敗: $station $date: ${e.message}")
                     }
                 }
+                val dates = recentDates(nowMs)
                 for (favorite in stationFavorites) {
-                    latestCache[favoriteKeyOf(favorite.stationId, favorite.title)] = if (succeeded == 0) {
-                        FavoriteRow(favorite, null, FavoriteRowStatus.ERROR)
+                    val cacheKey = favoriteKeyOf(favorite.stationId, favorite.title)
+                    val cached = latestCache[cacheKey]
+                    latestCache[cacheKey] = if (succeeded == 0) {
+                        // 全日の取得に失敗(オフラインなど)。取得済みの行があれば消さずに残す(再生できなくなるのを防ぐ)
+                        cached ?: FavoriteRow(favorite, null, FavoriteRowStatus.ERROR)
                     } else {
                         val latest = latestEpisode(programs, station, favorite.key, nowMs)
-                        FavoriteRow(
+                        val fresh = FavoriteRow(
                             favorite,
                             latest,
                             if (latest != null) FavoriteRowStatus.LOADED else FavoriteRowStatus.NO_RECENT_EPISODE,
                         )
+                        // 一部の日の取得に失敗したとき、見つかった最新回が取得済みのものより古い(または無い)なら、
+                        // 失敗した日にあった新しい回を取りこぼしただけなので、取得済みの行を残す
+                        val cachedStart = cached?.latest?.startTime
+                        if (succeeded < dates.size && cachedStart != null &&
+                            (latest == null || latest.startTime < cachedStart)
+                        ) cached else fresh
                     }
                 }
                 publish()
