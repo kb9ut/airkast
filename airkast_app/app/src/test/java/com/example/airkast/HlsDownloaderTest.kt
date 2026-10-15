@@ -3,23 +3,11 @@ package com.example.airkast
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
-import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.headersOf
-import kotlinx.coroutines.test.runTest
-import org.junit.Assert
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
-import org.junit.Rule
+import org.junit.Assert.assertNull
 import org.junit.Test
-import org.junit.rules.TemporaryFolder
-import java.io.File
-import kotlin.test.assertTrue
 
 class HlsDownloaderTest {
-
-    @get:Rule
-    val tempFolder = TemporaryFolder()
 
     @Test
     fun parsePlaylist_relativeUrls() {
@@ -62,135 +50,57 @@ class HlsDownloaderTest {
     }
 
     @Test
-    fun downloadStream_success() = runTest {
-        val masterPlaylist = """
+    fun parseMediaPlaylistUrl_picksLineAfterStreamInf() {
+        val master = """
             #EXTM3U
-            #EXT-X-STREAM-INF:BANDWIDTH=1500000,RESOLUTION=640x360
+            #EXT-X-STREAM-INF:BANDWIDTH=1500000
             media.m3u8
         """.trimIndent()
+        val downloader = HlsDownloader(HttpClient(MockEngine { respond("") }))
 
-        val mediaPlaylist = """
-            #EXTM3U
-            #EXT-X-TARGETDURATION:10
-            #EXTINF:10,
-            segment1.ts
-            #EXTINF:10,
-            segment2.ts
-        """.trimIndent()
-
-        val mockEngine = MockEngine { request ->
-            when (request.url.toString()) {
-                "http://example.com/stream/master.m3u8" -> respond(
-                    content = masterPlaylist,
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "application/vnd.apple.mpegurl")
-                )
-                "http://example.com/stream/media.m3u8" -> respond(
-                    content = mediaPlaylist,
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "application/vnd.apple.mpegurl")
-                )
-                "http://example.com/stream/segment1.ts" -> respond(
-                    content = "segment1_data".toByteArray(),
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "video/mp2t")
-                )
-                "http://example.com/stream/segment2.ts" -> respond(
-                    content = "segment2_data".toByteArray(),
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "video/mp2t")
-                )
-                else -> respond("", HttpStatusCode.NotFound)
-            }
-        }
-        val downloader = HlsDownloader(HttpClient(mockEngine))
-        val outputFile = tempFolder.newFile("output.ts")
-        var lastProgress = 0f
-
-        downloader.downloadStream("http://example.com/stream/media.m3u8", outputFile, "token") { progress ->
-            lastProgress = progress
-        }
-
-        assertTrue(outputFile.exists())
-        assertEquals("segment1_datasegment2_data", outputFile.readText())
-        assertEquals(1f, lastProgress)
+        assertEquals("media.m3u8", downloader.parseMediaPlaylistUrl(master))
     }
 
     @Test
-    fun downloadStream_failure_playlist_fetch_error() = runTest {
-        val mockEngine = MockEngine {
-            respond("", HttpStatusCode.InternalServerError)
-        }
-        val downloader = HlsDownloader(HttpClient(mockEngine))
-        val outputFile = tempFolder.newFile("output.ts")
+    fun parseMediaPlaylistUrl_fallsBackToFirstHttpLine() {
+        val master = """
+            #EXTM3U
+            https://example.com/media.m3u8
+        """.trimIndent()
+        val downloader = HlsDownloader(HttpClient(MockEngine { respond("") }))
 
-        try {
-            downloader.downloadStream("http://example.com/stream/media.m3u8", outputFile, "token") { /* do nothing */ }
-            Assert.fail("HlsDownloadException was not thrown")
-        } catch (e: HlsDownloadException) {
-            // success
-        }
+        assertEquals("https://example.com/media.m3u8", downloader.parseMediaPlaylistUrl(master))
     }
 
     @Test
-    fun downloadStream_failure_segment_fetch_error() = runTest {
-        val mediaPlaylist = """
-            #EXTM3U
-            #EXT-X-TARGETDURATION:10
-            #EXTINF:10,
-            segment1.ts
-        """.trimIndent()
+    fun parseMediaPlaylistUrl_returnsNullWhenNoUrl() {
+        val downloader = HlsDownloader(HttpClient(MockEngine { respond("") }))
 
-        val mockEngine = MockEngine { request ->
-            when (request.url.toString()) {
-                "http://example.com/stream/media.m3u8" -> respond(
-                    content = mediaPlaylist,
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "application/vnd.apple.mpegurl")
-                )
-                "http://example.com/stream/segment1.ts" -> respond(
-                    content = "",
-                    status = HttpStatusCode.InternalServerError
-                )
-                else -> respond("", HttpStatusCode.NotFound)
-            }
-        }
-        val downloader = HlsDownloader(HttpClient(mockEngine))
-        val outputFile = tempFolder.newFile("output.ts")
-
-        try {
-            downloader.downloadStream("http://example.com/stream/media.m3u8", outputFile, "token") { /* do nothing */ }
-            Assert.fail("HlsDownloadException was not thrown")
-        } catch (e: HlsDownloadException) {
-            // success
-        }
+        assertNull(downloader.parseMediaPlaylistUrl("#EXTM3U\n#EXT-X-VERSION:3"))
     }
 
     @Test
-    fun downloadStream_failure_no_segments() = runTest {
-        val emptyPlaylist = """
-            #EXTM3U
-            #EXT-X-TARGETDURATION:10
-        """.trimIndent()
+    fun parseAdtsHeader_readsStereo44100Frame() {
+        // AAC-LC (profile 1), 44.1kHz (index 4), 2ch, frameLength = 0x123
+        // header[2]: profile(2) | idx(4) | private(1) | chan hi(1) = 01 0100 0 0 = 0x50
+        // header[3]: chan lo(2) | ... | len hi(2) = 10 0000 00 | (0x123 >> 11) = 0x80
+        // header[4]: len mid(8) = (0x123 >> 3) & 0xFF = 0x24
+        // header[5]: len lo(3) | fullness hi(5) = (0x123 & 7) << 5 = 0x60
+        val header = byteArrayOf(0xFF.toByte(), 0xF1.toByte(), 0x50, 0x80.toByte(), 0x24, 0x60, 0x00)
 
-        val mockEngine = MockEngine { request ->
-            when (request.url.toString()) {
-                "http://example.com/stream/media.m3u8" -> respond(
-                    content = emptyPlaylist,
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "application/vnd.apple.mpegurl")
-                )
-                else -> respond("", HttpStatusCode.NotFound)
-            }
-        }
-        val downloader = HlsDownloader(HttpClient(mockEngine))
-        val outputFile = tempFolder.newFile("output.ts")
+        val adts = parseAdtsHeader(header)
 
-        try {
-            downloader.downloadStream("http://example.com/stream/media.m3u8", outputFile, "token") { /* do nothing */ }
-            Assert.fail("HlsDownloadException was not thrown")
-        } catch (e: HlsDownloadException) {
-            // success
-        }
+        assertEquals(1, adts.profile)
+        assertEquals(4, adts.sampleRateIdx)
+        assertEquals(2, adts.channelConfig)
+        assertEquals(0x123, adts.frameLength)
+    }
+
+    @Test
+    fun buildAudioSpecificConfig_matchesAacLc44100Stereo() {
+        // AudioSpecificConfig for AAC-LC / 44.1kHz / stereo is the well-known 0x12 0x10
+        val csd = buildAudioSpecificConfig(profile = 1, sampleRateIdx = 4, channelConfig = 2)
+
+        assertEquals(listOf<Byte>(0x12, 0x10), csd.toList())
     }
 }
