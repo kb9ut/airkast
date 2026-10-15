@@ -1,13 +1,16 @@
 package com.example.airkast.ui.components
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
@@ -24,6 +27,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.airkast.AirkastProgram
@@ -77,7 +83,7 @@ fun FavoriteRowCard(
                 IconButton(onClick = onRemove, modifier = Modifier.size(MinTouchTarget)) {
                     Icon(
                         imageVector = Icons.Filled.Star,
-                        contentDescription = stringResource(R.string.favorite_remove),
+                        contentDescription = stringResource(R.string.favorite_remove_for, row.favorite.title),
                         tint = colors.primary,
                     )
                 }
@@ -135,7 +141,9 @@ fun FavoriteRowCard(
                             }
                         // 自動取得が(別経路で)進行中。進捗が届くまでの間はインジケータだけ出す
                         autoRunning && downloadState is ProgramDownloadState.Idle ->
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            Box(modifier = Modifier.size(MinTouchTarget), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                            }
                         else -> DownloadButton(
                             state = downloadState,
                             programTitle = latest.title,
@@ -144,13 +152,27 @@ fun FavoriteRowCard(
                     }
                 }
                 Spacer(Modifier.width(Spacing.s))
-                Text(
-                    stringResource(R.string.favorite_auto_download),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = colors.onSurfaceVariant,
-                )
-                Spacer(Modifier.width(Spacing.xs))
-                Switch(checked = row.favorite.autoDownload, onCheckedChange = onAutoDownloadChange)
+                // ラベルとスイッチを 1 つの操作対象にまとめる(行全体が押せて、読み上げは番組名つきの 1 項目になる)
+                val autoDownloadDescription = stringResource(R.string.favorite_auto_download_for, row.favorite.title)
+                Row(
+                    modifier = Modifier
+                        .heightIn(min = MinTouchTarget)
+                        .toggleable(
+                            value = row.favorite.autoDownload,
+                            role = Role.Switch,
+                            onValueChange = onAutoDownloadChange,
+                        )
+                        .semantics { contentDescription = autoDownloadDescription },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.favorite_auto_download),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(Spacing.xs))
+                    Switch(checked = row.favorite.autoDownload, onCheckedChange = null)
+                }
             }
         }
     }
