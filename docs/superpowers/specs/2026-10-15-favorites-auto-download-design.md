@@ -53,7 +53,7 @@ data class Favorite(
 ```
 
 - **お気に入りの同一性:** `stationId + key`。`key` は番組名の前後空白除去、連続空白の圧縮、全角英数記号の半角化(NFKC)で作る。曜日・時刻は持たない。
-- **保存:** SharedPreferences にお気に入りのリストを JSON で1キー保存する。件数は数十を想定し、Room は使わない。
+- **保存:** SharedPreferences にタブ区切りの行テキストで保存する(JSON は kotlinx-serialization のプラグインが無く、JVM テストで `org.json` が使えないため採用しない)。件数は数十を想定し、Room は使わない。失敗回数は `Favorite` ではなく `FavoriteRepository` が「回のキー(`局ID:開始時刻`)→回数」として別に保存する。
 - 失敗回数は番組ID単位で数え、上限は 3 回(`MAX_ATTEMPTS`)。上限を超えた回は自動では再試行しない(画面から手動で再開できる)。
 
 ## 4. 新しい回の判定(`FavoriteMatcher`)
@@ -75,7 +75,7 @@ data class Favorite(
 - 処理: 局ごとに直近7日の番組表を取得 → `FavoriteMatcher` → 各番組を `DownloadRunner` で順次(同時実行は1)ダウンロード。成功は通知、失敗は失敗回数を加算。
 - **フォアグラウンド実行:** Android 12 以降はバックグラウンドから通常のフォアグラウンドサービスを開始できない。そのため Worker 自身が `setForeground(ForegroundInfo, FOREGROUND_SERVICE_TYPE_DATA_SYNC)` を呼んで実行する。既存の通知チャンネルを共有する。
 - 認証(auth1 / auth2)は Worker 実行ごとに行う。取得できない(エリア外など)場合は、その回を失敗として数えず、次の周期に回す。
-- 画面のダウンロード状態(`downloadStates`)と二重管理しない。`DownloadRunner` が状態を更新し、Worker 経由でも画面に反映される。
+- Worker は画面のダウンロード状態(`downloadStates`)を更新しない。進捗は通知のみで、取得済みの反映は画面復帰時のファイル再走査に任せる。手動ダウンロード中の回を重複して始めないよう、`downloadStates` を読んで除外する。
 
 ## 6. 画面
 
@@ -95,7 +95,7 @@ data class Favorite(
 - `FavoriteMatcher`: 名前正規化、7日の境界、放送終了前後、重複取得、失敗回数上限、`autoDownload` OFF を、時刻を固定した単体テストで網羅する。
 - `FavoriteRepository`: JSON の保存/復元、同一性(局+正規化名)での重複排除。
 - `DownloadRunner` への切り出しは、既存の `HlsDownloadServiceTest` / `HlsDownloaderTest` を通すこと(挙動不変)。
-- `FavoriteSyncWorker`: `work-testing` で、制約・登録/解除・新しい回がないときの動作を確認する。実際の radiko 接続と実機のバックグラウンド動作は、手動確認とする。
+- `FavoriteSync`(番組表取得→判定→ダウンロードの手順)を、番組表の取得元とダウンローダを差し替えられる形で単体テストする。`FavoriteSyncWorker` は薄い接続のみとし、`work-testing` は使わない。実際の radiko 接続と実機のバックグラウンド動作は手動確認とする。
 
 ## 9. 実装の段階
 
