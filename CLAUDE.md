@@ -95,14 +95,16 @@ Headers: X-Radiko-Authtoken: {token}
 - `MainViewModel` ↔ `PlayerService` のカスタムコマンド名・Bundleキーは `service/PlayerCommands.kt` に集約している。文字列を直書きしない。
 - UIを変更するときは `MainActivity.kt` ではなく `ui/` 以下を編集する。ダウンロードボタンは `ProgramDownloadState` だけから描画する。
 - `MainViewModel` の `dateList` / `ongoingDownloadStates` / `downloadedFiles` / `skipBackward` / `skipForward` / `setPlaybackSpeed` / `userMessage` は UI が依存している。名前を変えるとビルドが壊れる。
-- 追加予定の機能(お気に入り番組の自動ダウンロード)の設計と実装計画は `docs/superpowers/specs/` と `docs/superpowers/plans/` にある。
+- お気に入り番組の自動ダウンロードは `favorites/` パッケージ。呼び出しは `AirkastApplication.onCreate` → `FavoriteSyncScheduler` → `FavoriteSyncWorker` → `FavoriteSync` → `FavoriteMatcher` / `FavoriteRepository` → `DownloadRunner`。設計と計画は `docs/superpowers/specs/` と `docs/superpowers/plans/`。
+- この機能は UI が無いため、お気に入りを追加できず休眠状態。UI の計画では必ず次を行う: (1) ★や自動DLの切り替えのたびに `FavoriteSyncScheduler.update` を呼ぶ、(2) 手動ダウンロードと Worker が同じ `getDownloadFile` のパスへ書かないよう、プロセス全体のダウンロード中レジストリを作る(現状 Worker は `HlsDownloadService.downloadStates` を読むだけ)、(3) Android 13 以降で `POST_NOTIFICATIONS` を要求する、(4) 通知に `contentIntent` を付ける。
+- Worker は Android 12 以降ではフォアグラウンド昇格なしで動き、WorkManager の実行枠(約10分)に収まる範囲で処理する。Worker は UI と別の `AirkastClient` を使う。
 
 ## 既知の課題
 
 - 認証トークンの有効期限切れ時の再認証は未実装。
 - 複数ダウンロードの優先度管理は未実装 (同時実行数の上限のみ)。
 - `HlsDownloadService` / `PlayerService` の自動テストが不足している。
-- 有効な音声トラックが見つからない場合、M4A変換は例外を出さず出力ファイルが生成されないが、ダウンロードは完了扱いになる。
+- 有効な音声トラックが見つからない場合、M4A変換は例外を出さず出力ファイルが生成されないが、`DownloadRunner` が出力ファイルの有無を確認するため、手動・自動のどちらもエラー扱いになる(完了扱いにはならない)。
 - AndroidManifest に `FileProvider` の宣言があるが、コードからは使用していない。
 - `airkast_app/LICENSE` はプレースホルダーのまま。
 

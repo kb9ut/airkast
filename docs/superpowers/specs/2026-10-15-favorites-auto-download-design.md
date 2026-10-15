@@ -21,7 +21,7 @@
 ## 2. 全体構成
 
 ```
-UI (Compose)  ──▶ FavoritesViewModel ──▶ FavoriteRepository (SharedPreferences + JSON)
+UI (Compose)  ──▶ FavoritesViewModel ──▶ FavoriteRepository (SharedPreferences + タブ区切りテキスト)
                                          │
                                          ▼
 FavoriteSyncWorker (WorkManager, 約6時間ごと)
@@ -32,29 +32,30 @@ FavoriteSyncWorker (WorkManager, 約6時間ごと)
 
 | ユニット | 役割 | 依存 |
 |---|---|---|
-| `Favorite` / `FavoriteRepository` | お気に入りの保存・取得・自動DL設定・失敗回数の保持 | SharedPreferences, kotlinx-serialization |
+| `Favorite` / `FavoriteRepository` | お気に入りの保存・取得・自動DL設定・失敗回数の保持 | SharedPreferences |
 | `FavoriteMatcher` | 番組表とお気に入りから「新しい回」を判定する純粋関数 | なし |
 | `DownloadRunner` | 1番組をダウンロードして m4a にするコア処理(進捗コールバック付き) | `AirkastClient`, `HlsDownloader` |
 | `HlsDownloadService` | 既存。`DownloadRunner` を呼ぶ薄いフォアグラウンドサービスにする | `DownloadRunner` |
-| `FavoriteSyncWorker` | 定期実行。新しい回を見つけ、`setForeground`(dataSync) 下で `DownloadRunner` を実行し、通知する | 上記すべて, WorkManager |
+| `FavoriteSyncWorker` | 定期実行。新しい回を見つけ、`DownloadRunner` で順次ダウンロードし、通知する(`setForeground`(dataSync) は試みるが、失敗しても続行する) | 上記すべて, WorkManager |
 | `FavoritesViewModel` と画面 | ★操作、お気に入り一覧、自動DLスイッチ | `FavoriteRepository`, 既存 `MainViewModel` |
 
 ## 3. データモデル
 
 ```kotlin
-@Serializable
 data class Favorite(
     val stationId: String,
     val title: String,            // 表示用の元の番組名
-    val key: String,              // 正規化済み番組名(照合用)
     val autoDownload: Boolean = true,
-    val failures: Map<String, Int> = emptyMap() // programId -> 失敗回数
-)
+) {
+    val key: String               // 正規化済み番組名(照合用)。title から計算する
+}
 ```
+
+失敗回数は `Favorite` に持たせず、`FavoriteRepository` が「回のキー(`episodeKey` = `局ID:開始時刻`)→回数」として別に保存する。
 
 - **お気に入りの同一性:** `stationId + key`。`key` は番組名の前後空白除去、連続空白の圧縮、全角英数記号の半角化(NFKC)で作る。曜日・時刻は持たない。
 - **保存:** SharedPreferences にタブ区切りの行テキストで保存する(JSON は kotlinx-serialization のプラグインが無く、JVM テストで `org.json` が使えないため採用しない)。件数は数十を想定し、Room は使わない。失敗回数は `Favorite` ではなく `FavoriteRepository` が「回のキー(`局ID:開始時刻`)→回数」として別に保存する。
-- 失敗回数は番組ID単位で数え、上限は 3 回(`MAX_ATTEMPTS`)。上限を超えた回は自動では再試行しない(画面から手動で再開できる)。
+- 失敗回数は回のキー(`局ID:開始時刻`)単位で数え、上限は 3 回(`MAX_ATTEMPTS`)。上限に達した回は自動では再試行しない(画面から手動で再開できる)。
 
 ## 4. 新しい回の判定(`FavoriteMatcher`)
 
@@ -72,8 +73,8 @@ data class Favorite(
 ## 5. 自動ダウンロード(`FavoriteSyncWorker`)
 
 - `PeriodicWorkRequest` 6 時間間隔、制約: `NetworkType.UNMETERED`、`requiresBatteryNotLow`。バックオフは指数。ユニーク名で重複登録を防ぎ、自動DLが ON のお気に入りが1件でもあるときだけ登録する(0件になったら解除)。
-- 処理: 局ごとに直近7日の番組表を取得 → `FavoriteMatcher` → 各番組を `DownloadRunner` で順次(同時実行は1)ダウンロード。成功は通知、失敗は失敗回数を加算。
-- **フォアグラウンド実行:** Android 12 以降はバックグラウンドから通常のフォアグラウンドサービスを開始できない。そのため Worker 自身が `setForeground(ForegroundInfo, FOREGROUND_SERVICE_TYPE_DATA_SYNC)` を呼んで実行する。既存の通知チャンネルを共有する。
+- 処理: 局ごとに直近7日の番組表を取得 → `FavoriteMatcher` → 各番組を `DownloadRunner` で順次(同時実行は1)ダウンロード。成功は通知。試行はダウンロード開始の直前に失敗回数へ加算し(中断された試行も `MAX_ATTEMPTS` に数える。古い順の先頭にある長い回が毎回後続をブロックしないため)、成功したらクリアする。ダウンロードが正常終了しても出力ファイルが無い/空の場合は失敗として扱う(`requireOutputFile`。手動ダウンロードも同様にエラー表示になる)。
+- **フォアグラウンド実行:** Worker は `setForeground(ForegroundInfo, FOREGROUND_SERVICE_TYPE_DATA_SYNC)` を試みる。Android 12 以降のバックグラウンド起動では昇格に失敗しうるため、失敗した場合は通常の WorkManager の実行枠(約10分)の中でそのまま続行する。枠で打ち切られた場合はキャンセルとして扱い、部分ファイルを削除して次の周期に回す(その試行も失敗回数に数える)。進捗・完了は通常の通知で出す。
 - 認証(auth1 / auth2)は Worker 実行ごとに行う。取得できない(エリア外など)場合は、その回を失敗として数えず、次の周期に回す。
 - Worker は画面のダウンロード状態(`downloadStates`)を更新しない。進捗は通知のみで、取得済みの反映は画面復帰時のファイル再走査に任せる。手動ダウンロード中の回を重複して始めないよう、`downloadStates` を読んで除外する。
 
@@ -93,7 +94,7 @@ data class Favorite(
 ## 8. テスト
 
 - `FavoriteMatcher`: 名前正規化、7日の境界、放送終了前後、重複取得、失敗回数上限、`autoDownload` OFF を、時刻を固定した単体テストで網羅する。
-- `FavoriteRepository`: JSON の保存/復元、同一性(局+正規化名)での重複排除。
+- `FavoriteRepository`: テキストの保存/復元、同一性(局+正規化名)での重複排除。
 - `DownloadRunner` への切り出しは、既存の `HlsDownloadServiceTest` / `HlsDownloaderTest` を通すこと(挙動不変)。
 - `FavoriteSync`(番組表取得→判定→ダウンロードの手順)を、番組表の取得元とダウンローダを差し替えられる形で単体テストする。`FavoriteSyncWorker` は薄い接続のみとし、`work-testing` は使わない。実際の radiko 接続と実機のバックグラウンド動作は手動確認とする。
 
