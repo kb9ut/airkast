@@ -266,8 +266,8 @@ class HlsDownloadService : Service() {
     }
 
     private fun cancelDownload(programId: String) {
-        downloadJobs[programId]?.cancel()
-        downloadJobs.remove(programId)
+        val job = downloadJobs.remove(programId)
+        job?.cancel()
         val currentState = _downloadStates.value[programId]
         val program = currentState?.program ?: AirkastProgram(
             id = programId,
@@ -282,9 +282,13 @@ class HlsDownloadService : Service() {
 
         updateState(programId, DownloadStatus.Canceled(program))
 
-        // 関連ファイルのクリーンアップ
-        val finalFile = getDownloadFile(this, program)
-        deleteAll(partialFiles(finalFile))
+        // 関連ファイルのクリーンアップ。ジョブがあれば、ジョブ自身の catch で(予約を解放する前に)削除する。
+        // ここで削除すると、ジョブの後始末と予約の解放が先に終わった後に、別の処理(Worker)が
+        // 取り直した予約の下で書き込み中のファイルを消してしまうことがある。
+        if (job == null) {
+            val finalFile = getDownloadFile(this, program)
+            deleteAll(partialFiles(finalFile))
+        }
 
         updateNotification()
         if (downloadJobs.isEmpty()) {

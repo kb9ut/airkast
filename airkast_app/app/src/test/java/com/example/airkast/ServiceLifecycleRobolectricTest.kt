@@ -8,6 +8,7 @@ import com.example.airkast.service.PlayerService
 import io.mockk.mockk
 import io.mockk.verify
 import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -129,5 +130,30 @@ class ServiceLifecycleRobolectricTest {
         assertNull(HlsDownloadService.downloadStates.value[program.id])
         assertTrue(DownloadRegistry.isClaimed(program.episodeKey))
         controller.destroy()
+    }
+
+    @Test
+    fun hlsDownloadService_releasesTheClaimWhenTheServiceIsDestroyedMidDownload() {
+        val program = AirkastProgram(
+            "release-1", "TBS", "20260124220000", "20260124230000", "アフター6", "", "", null
+        )
+        val intent = Intent(RuntimeEnvironment.getApplication(), HlsDownloadService::class.java).apply {
+            action = HlsDownloadService.ACTION_START_DOWNLOAD
+            putExtra(HlsDownloadService.EXTRA_PROGRAM, program)
+        }
+        val controller = Robolectric.buildService(HlsDownloadService::class.java).create()
+
+        controller.withIntent(intent).startCommand(0, 1)
+        assertTrue(DownloadRegistry.isClaimed(program.episodeKey))
+
+        // サービスの破棄で serviceJob がキャンセルされ、各ジョブの完了時に予約が解放される
+        controller.destroy()
+
+        val deadline = System.currentTimeMillis() + 5_000
+        while (DownloadRegistry.isClaimed(program.episodeKey) && System.currentTimeMillis() < deadline) {
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(20)
+        }
+        assertFalse(DownloadRegistry.isClaimed(program.episodeKey))
     }
 }
