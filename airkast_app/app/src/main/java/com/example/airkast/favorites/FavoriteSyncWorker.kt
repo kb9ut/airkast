@@ -1,0 +1,145 @@
+package com.example.airkast.favorites
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
+import androidx.work.WorkerParameters
+import com.example.airkast.AirkastApplication
+import com.example.airkast.AirkastClient
+import com.example.airkast.AirkastProgram
+import com.example.airkast.DownloadRunner
+import com.example.airkast.service.HlsDownloadService
+import kotlinx.coroutines.CancellationException
+import java.io.File
+
+private const val TAG = "FavoriteSyncWorker"
+private const val CHANNEL_ID = "FavoriteSyncChannel"
+private const val PROGRESS_NOTIFICATION_ID = 2
+private const val DONE_NOTIFICATION_BASE_ID = 1000
+
+/** 約 6 時間ごとに、お気に入り番組の新しい回を自動ダウンロードする。 */
+class FavoriteSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+
+    private val notificationManager =
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo("お気に入りを確認中", "")
+
+    override suspend fun doWork(): Result {
+        val repository = FavoriteRepository(PrefsTextStorage(applicationContext))
+        if (!repository.hasAutoDownload()) return Result.success()
+
+        val client = (applicationContext as AirkastApplication).airkastClient
+        createNotificationChannel()
+        try {
+            setForeground(getForegroundInfo())
+        } catch (e: IllegalStateException) {
+            // バックグラウンド起動の制限などで昇格できなかった場合は、次の機会に回す
+            Log.w(TAG, "フォアグラウンドに昇格できませんでした: ${e.message}")
+            return Result.retry()
+        }
+
+        try {
+            client.authenticate()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "認証に失敗: ${e.message}")
+            return Result.retry()
+        }
+
+        val sync = FavoriteSync(
+            repository = repository,
+            guides = ClientGuideSource(client),
+            downloader = RunnerEpisodeDownloader(applicationContext, DownloadRunner(client)),
+            downloadedFiles = { downloadedFiles() },
+            isDownloading = { isDownloadingManually(it) },
+        )
+        val report = sync.run { program, percent ->
+            notificationManager.notify(
+                PROGRESS_NOTIFICATION_ID,
+                progressNotification("${program.title} をダウンロード中", "$percent%"),
+            )
+        }
+
+        notificationManager.cancel(PROGRESS_NOTIFICATION_ID)
+        report.downloaded.forEach { notifyDownloaded(it) }
+        return if (report.allStationsFailed) Result.retry() else Result.success()
+    }
+
+    private fun downloadedFiles(): List<File> =
+        applicationContext.getExternalFilesDir("downloads")?.listFiles()?.toList().orEmpty()
+
+    /** 画面から手動ダウンロード中の回を、自動ダウンロードが重複して始めないための判定。 */
+    private fun isDownloadingManually(program: AirkastProgram): Boolean =
+        when (HlsDownloadService.downloadStates.value[program.id]) {
+            is HlsDownloadService.DownloadStatus.Pending,
+            is HlsDownloadService.DownloadStatus.InProgress,
+            is HlsDownloadService.DownloadStatus.Muxing -> true
+            else -> false
+        }
+
+    private fun notifyDownloaded(program: AirkastProgram) {
+        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setContentTitle("ダウンロード完了")
+            .setContentText(program.title)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setAutoCancel(true)
+            .build()
+        val id = DONE_NOTIFICATION_BASE_ID + (program.id.hashCode() and 0xFFFF)
+        notificationManager.notify(id, notification)
+    }
+
+    private fun foregroundInfo(title: String, text: String): ForegroundInfo {
+        val notification = progressNotification(title, text)
+        return if (Build.VERSION.SDK_INT >= 29) {
+            ForegroundInfo(PROGRESS_NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            ForegroundInfo(PROGRESS_NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun progressNotification(title: String, text: String) =
+        NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .build()
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(CHANNEL_ID, "お気に入りの自動ダウンロード", NotificationManager.IMPORTANCE_LOW)
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+}
+
+/** 実際の radiko 番組表を取得する [GuideSource]。 */
+internal class ClientGuideSource(private val client: AirkastClient) : GuideSource {
+    override suspend fun programs(stationId: String, date: String): List<AirkastProgram> =
+        client.getProgramGuide(stationId, date)
+}
+
+/** [DownloadRunner] で所定のファイルにダウンロードする [EpisodeDownloader]。失敗時は部分ファイルを消す。 */
+internal class RunnerEpisodeDownloader(
+    private val context: Context,
+    private val runner: DownloadRunner,
+) : EpisodeDownloader {
+    override suspend fun download(program: AirkastProgram, onProgress: (Int) -> Unit) {
+        val outputFile = HlsDownloadService.getDownloadFile(context, program)
+        try {
+            runner.run(program, outputFile, DownloadRunner.DEFAULT_CHUNK_SIZE_SECONDS, onProgress)
+        } catch (e: Throwable) {
+            if (outputFile.exists()) outputFile.delete()
+            throw e
+        }
+    }
+}

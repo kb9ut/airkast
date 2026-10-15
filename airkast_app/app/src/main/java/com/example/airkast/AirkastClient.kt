@@ -201,6 +201,12 @@ class AirkastClient {
         }
     }
 
+    /** auth1 → 部分キー生成 → auth2 を一括で行い、認証トークンを確立してエリアIDを返します。 */
+    suspend fun authenticate(): String {
+        val (keyLength, keyOffset) = auth1()
+        return auth2(getPartialKey(keyOffset, keyLength))
+    }
+
     /**
      * 指定されたエリアの放送局リストを取得します。
      * @param areaId エリアID。

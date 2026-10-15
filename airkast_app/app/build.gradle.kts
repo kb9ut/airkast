@@ -91,6 +91,9 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.9.0") // 追加
     implementation("androidx.media3:media3-session:1.9.0")
 
+    // WorkManager (お気に入りの自動ダウンロード)
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
+
     // OSS Licenses
     implementation("com.google.android.gms:play-services-oss-licenses:17.3.0")
 

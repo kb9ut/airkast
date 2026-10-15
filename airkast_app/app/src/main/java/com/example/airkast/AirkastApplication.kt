@@ -1,11 +1,23 @@
 package com.example.airkast
 
 import android.app.Application
+import com.example.airkast.favorites.FavoriteRepository
+import com.example.airkast.favorites.FavoriteSyncScheduler
+import com.example.airkast.favorites.PrefsTextStorage
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
 class AirkastApplication : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        // 自動DL が ON のお気に入りがあれば定期同期を登録、無ければ解除する
+        FavoriteSyncScheduler.update(
+            this,
+            FavoriteRepository(PrefsTextStorage(this)).hasAutoDownload(),
+        )
+    }
+
     val airkastClient: AirkastClient by lazy {
         AirkastClient()
     }
