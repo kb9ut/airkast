@@ -23,7 +23,10 @@ private const val CHANNEL_ID = "FavoriteSyncChannel"
 private const val PROGRESS_NOTIFICATION_ID = 2
 private const val DONE_NOTIFICATION_BASE_ID = 1000
 
-/** 約 6 時間ごとに、お気に入り番組の新しい回を自動ダウンロードする。 */
+/**
+ * 約 6 時間ごとに、お気に入り番組の新しい回を自動ダウンロードする。
+ * 可能ならフォアグラウンドに昇格して実行し、昇格できない場合は通常の実行枠で続行する。
+ */
 class FavoriteSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     private val notificationManager =
@@ -40,9 +43,8 @@ class FavoriteSyncWorker(context: Context, params: WorkerParameters) : Coroutine
         try {
             setForeground(getForegroundInfo())
         } catch (e: IllegalStateException) {
-            // バックグラウンド起動の制限などで昇格できなかった場合は、次の機会に回す
-            Log.w(TAG, "フォアグラウンドに昇格できませんでした: ${e.message}")
-            return Result.retry()
+            // バックグラウンドからのフォアグラウンド昇格は Android 12 以降で失敗しうるため、失敗しても通常の実行枠で続行する
+            Log.w(TAG, "フォアグラウンドに昇格できませんでした。通常の実行枠で続行します: ${e.message}")
         }
 
         try {
