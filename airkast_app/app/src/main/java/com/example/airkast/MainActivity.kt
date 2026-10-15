@@ -52,6 +52,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.util.UnstableApi
 import com.example.airkast.service.HlsDownloadService
 import com.google.android.gms.oss.licenses.OssLicensesMenuActivity
@@ -68,6 +71,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        // 起動しっぱなし/バックグラウンド復帰/日跨ぎで日付リストが古くならないよう、表示中は日付変化を監視する
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) { viewModel.watchDateChanges() }
+        }
         setContent {
             AirkastTheme {
                 Surface(
@@ -239,7 +246,7 @@ fun FindProgramsScreen(viewModel: MainViewModel) {
     val selectedStationId by viewModel.selectedStationId.collectAsState()
     val selectedDate by viewModel.selectedDate.collectAsState()
     val programGuideUiState by viewModel.programGuideUiState.collectAsState()
-    val dateList = viewModel.dateList
+    val dateList by viewModel.dateList.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize()) {
         when (val state = stationUiState) {

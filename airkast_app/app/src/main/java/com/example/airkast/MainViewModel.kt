@@ -37,7 +37,7 @@ private const val TAG = "MainViewModel"
  * メイン画面のビジネスロジックを担当するViewModel。
  * 認証、放送局リスト、番組表、ダウンロードの状態を管理します。
  */
-class MainViewModel(
+open class MainViewModel(
     application: Application
 ) : AndroidViewModel(application) {
 
@@ -50,8 +50,21 @@ class MainViewModel(
     private val _selectedStationId = MutableStateFlow<String?>(null)
     val selectedStationId: StateFlow<String?> = _selectedStationId.asStateFlow()
 
+    // 現在時刻の取得元 (テストで差し替え可能)
+    internal var clock: () -> Long = { System.currentTimeMillis() }
+
     private val _selectedDate = MutableStateFlow(Date())
     val selectedDate: StateFlow<Date> = _selectedDate.asStateFlow()
+
+    /**
+     * 過去7日間の日付リスト（昇順：古い順→新しい順）。
+     * 日付が変わった場合は [refreshDateIfChanged] で更新されます。
+     */
+    private val _dateList = MutableStateFlow(buildDateList(Date()))
+    val dateList: StateFlow<List<Date>> = _dateList.asStateFlow()
+
+    // dateList / selectedDate を最後に計算した時点の「今日」(yyyyMMdd)
+    private var lastDayKey = dayKey(Date())
 
     private val _programGuideUiState = MutableStateFlow<UiState<List<AirkastProgram>>>(UiState.Idle)
     val programGuideUiState: StateFlow<UiState<List<AirkastProgram>>> = _programGuideUiState.asStateFlow()
@@ -190,7 +203,8 @@ class MainViewModel(
         savePreferences()
     }
 
-    private fun connectToPlayerService() {
+    // テストで差し替えられるよう open (JVM テストでは Media3 の SessionToken を解決できない)
+    protected open fun connectToPlayerService() {
         Log.d(TAG, "PlayerService接続開始...")
         val sessionToken = SessionToken(
             getApplication(),
@@ -553,11 +567,38 @@ class MainViewModel(
     }
 
     /**
-     * 過去7日間の日付リスト（昇順：古い順→新しい順）。
+     * 日付が変わっていれば日付リストと選択日を更新します。日付が同じなら何もしません。
+     * - 「今日」を選択中だった場合は新しい「今日」に追従して番組表を再取得します。
+     * - 過去日を選択中で、新しいリストにも含まれる場合は選択を維持します（再取得なし）。
+     * - 選択日がリストから外れた場合は新しい「今日」を選択します。
      */
-    val dateList: List<Date> by lazy {
-        List(7) { i ->
-            java.util.Calendar.getInstance().apply { add(java.util.Calendar.DAY_OF_YEAR, -(6 - i)) }.time
+    fun refreshDateIfChanged() {
+        val today = Date(clock())
+        val todayKey = dayKey(today)
+        if (todayKey == lastDayKey) return
+
+        val selectedKey = dayKey(_selectedDate.value)
+        val wasOnToday = selectedKey == lastDayKey
+        lastDayKey = todayKey
+
+        val newList = buildDateList(today)
+        _dateList.value = newList
+
+        val newSelected = if (wasOnToday) today else newList.firstOrNull { dayKey(it) == selectedKey } ?: today
+        if (dayKey(newSelected) != selectedKey) {
+            _selectedDate.value = newSelected
+            fetchProgramGuide()
+        }
+    }
+
+    /**
+     * フォアグラウンドの間、日付の変化（日跨ぎ）を監視します。
+     * 画面が STARTED の間だけ動かす想定 (repeatOnLifecycle)。開始時にも1回チェックします。
+     */
+    suspend fun watchDateChanges() {
+        while (true) {
+            refreshDateIfChanged()
+            kotlinx.coroutines.delay(60_000L)
         }
     }
 
@@ -638,4 +679,14 @@ enum class MediaBrowserConnectionState {
     SUSPENDED,
     FAILED,
     DISCONNECTED
+}
+
+private fun dayKey(date: Date): String = SimpleDateFormat("yyyyMMdd", Locale.JAPAN).format(date)
+
+/** [now] を含む過去7日間の日付リスト（昇順：古い順→新しい順）。 */
+internal fun buildDateList(now: Date): List<Date> = List(7) { i ->
+    java.util.Calendar.getInstance().apply {
+        time = now
+        add(java.util.Calendar.DAY_OF_YEAR, -(6 - i))
+    }.time
 }
