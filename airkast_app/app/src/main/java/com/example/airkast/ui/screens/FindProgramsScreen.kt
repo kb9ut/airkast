@@ -32,6 +32,8 @@ import com.example.airkast.MainViewModel
 import com.example.airkast.R
 import com.example.airkast.TimeFilter
 import com.example.airkast.UiState
+import com.example.airkast.favorites.FavoritesViewModel
+import com.example.airkast.favorites.favoriteKeyOf
 import com.example.airkast.isProgramDownloaded
 import com.example.airkast.ui.components.DateSelector
 import com.example.airkast.ui.components.LoadingMessage
@@ -51,7 +53,9 @@ import com.example.airkast.ui.theme.groupedItemShape
 @Composable
 fun FindProgramsScreen(
     viewModel: MainViewModel,
+    favoritesViewModel: FavoritesViewModel,
     contentBottomPadding: Dp,
+    onBeforeEnableAutoDownload: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val stationUiState by viewModel.stationUiState.collectAsState()
@@ -143,7 +147,9 @@ fun FindProgramsScreen(
                                 ProgramGuideList(
                                     programs = filtered,
                                     viewModel = viewModel,
+                                    favoritesViewModel = favoritesViewModel,
                                     contentBottomPadding = contentBottomPadding,
+                                    onBeforeEnableAutoDownload = onBeforeEnableAutoDownload,
                                 )
                             }
                         }
@@ -184,8 +190,11 @@ private fun filterByTime(programs: List<AirkastProgram>, filter: TimeFilter): Li
 private fun ProgramGuideList(
     programs: List<AirkastProgram>,
     viewModel: MainViewModel,
+    favoritesViewModel: FavoritesViewModel,
     contentBottomPadding: Dp,
+    onBeforeEnableAutoDownload: () -> Unit,
 ) {
+    val favoriteKeys by favoritesViewModel.favoriteKeys.collectAsState()
     val ongoingDownloadStates by viewModel.ongoingDownloadStates.collectAsState()
     val downloadedFiles by viewModel.downloadedFiles.collectAsState()
     val chunkSize by viewModel.downloadChunkSize.collectAsState()
@@ -211,6 +220,13 @@ private fun ProgramGuideList(
                 downloadState = state,
                 shape = groupedItemShape(index, programs.size),
                 onDownloadClick = { viewModel.onDownloadProgram(program, chunkSize) },
+                isFavorite = favoriteKeyOf(program.stationId, program.title) in favoriteKeys,
+                onToggleFavorite = {
+                    val adding = favoriteKeyOf(program.stationId, program.title) !in favoriteKeys
+                    // 自動DL が ON になる操作(追加)の直前にだけ通知権限を確認する
+                    if (adding) onBeforeEnableAutoDownload()
+                    favoritesViewModel.toggleFavorite(program.stationId, program.title)
+                },
             )
         }
     }

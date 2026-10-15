@@ -1,6 +1,7 @@
 package com.example.airkast.ui
 
 import android.content.Intent
+import android.provider.Settings
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
@@ -16,8 +17,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -27,8 +30,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -38,6 +43,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -48,10 +54,12 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.example.airkast.MainViewModel
 import com.example.airkast.R
+import com.example.airkast.favorites.FavoritesViewModel
 import com.example.airkast.ui.components.AreaSelectionDialog
 import com.example.airkast.ui.components.DownloadChunkSizeDialog
 import com.example.airkast.ui.components.PlayerOverlay
 import com.example.airkast.ui.screens.DownloadsScreen
+import com.example.airkast.ui.screens.FavoritesScreen
 import com.example.airkast.ui.screens.FindProgramsScreen
 import com.example.airkast.ui.theme.AirkastMotion
 import com.example.airkast.ui.theme.MinTouchTarget
@@ -61,14 +69,49 @@ import kotlinx.coroutines.launch
 /** アプリ全体のシェル: トップバー + コンテンツ + ナビゲーションバー + 浮遊ミニプレイヤー。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainApp(viewModel: MainViewModel) {
-    var tabIndex by rememberSaveable { mutableStateOf(TAB_FIND) }
+fun MainApp(
+    viewModel: MainViewModel,
+    favoritesViewModel: FavoritesViewModel,
+    openTabRequest: String?,
+    onOpenTabHandled: () -> Unit,
+) {
+    var tabIndex by rememberSaveable { mutableStateOf(tabIndexForExtra(openTabRequest)) }
     var showAreaDialog by remember { mutableStateOf(false) }
     var showChunkSizeDialog by remember { mutableStateOf(false) }
     var playerReservedHeight by remember { mutableStateOf(0.dp) }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+
+    // 通知タップなどで開くタブが指定されたら切り替える(処理したら要求を消す)
+    LaunchedEffect(openTabRequest) {
+        if (openTabRequest != null) {
+            tabIndex = tabIndexForExtra(openTabRequest)
+            onOpenTabHandled()
+        }
+    }
+
+    // 自動DL を ON にする操作の直前に通知権限を確認し、拒否されたら設定へ誘導する
+    val scope = rememberCoroutineScope()
+    val deniedMessage = stringResource(R.string.notification_denied)
+    val settingsLabel = stringResource(R.string.open_notification_settings)
+    val ensureNotificationPermission = rememberNotificationPermissionGate(
+        onDenied = {
+            scope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = deniedMessage,
+                    actionLabel = settingsLabel,
+                    duration = SnackbarDuration.Long,
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    context.startActivity(
+                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                    )
+                }
+            }
+        },
+    )
 
     // メッセージはキューに積む(表示中でも次のメッセージの受信を止めない)
     LaunchedEffect(viewModel) {
@@ -90,7 +133,13 @@ fun MainApp(viewModel: MainViewModel) {
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             AirkastTopBar(
-                title = stringResource(if (tabIndex == TAB_FIND) R.string.nav_find else R.string.nav_downloads),
+                title = stringResource(
+                    when (tabIndex) {
+                        TAB_FAVORITES -> R.string.nav_favorites
+                        TAB_FIND -> R.string.nav_find
+                        else -> R.string.nav_downloads
+                    },
+                ),
                 scrollBehavior = scrollBehavior,
                 onAreaClick = { showAreaDialog = true },
                 onDownloadSettingsClick = { showChunkSizeDialog = true },
@@ -105,6 +154,17 @@ fun MainApp(viewModel: MainViewModel) {
         },
         bottomBar = {
             NavigationBar {
+                NavigationBarItem(
+                    selected = tabIndex == TAB_FAVORITES,
+                    onClick = { tabIndex = TAB_FAVORITES },
+                    icon = {
+                        Icon(
+                            imageVector = if (tabIndex == TAB_FAVORITES) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                            contentDescription = null,
+                        )
+                    },
+                    label = { Text(stringResource(R.string.nav_favorites)) },
+                )
                 NavigationBarItem(
                     selected = tabIndex == TAB_FIND,
                     onClick = { tabIndex = TAB_FIND },
@@ -148,7 +208,18 @@ fun MainApp(viewModel: MainViewModel) {
                 label = "tabContent",
             ) { tab ->
                 when (tab) {
-                    TAB_FIND -> FindProgramsScreen(viewModel, contentBottomPadding = reserved)
+                    TAB_FAVORITES -> FavoritesScreen(
+                        favoritesViewModel = favoritesViewModel,
+                        mainViewModel = viewModel,
+                        contentBottomPadding = reserved,
+                        onBeforeEnableAutoDownload = ensureNotificationPermission,
+                    )
+                    TAB_FIND -> FindProgramsScreen(
+                        viewModel = viewModel,
+                        favoritesViewModel = favoritesViewModel,
+                        contentBottomPadding = reserved,
+                        onBeforeEnableAutoDownload = ensureNotificationPermission,
+                    )
                     else -> DownloadsScreen(viewModel, contentBottomPadding = reserved)
                 }
             }
