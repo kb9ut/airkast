@@ -58,9 +58,6 @@ import com.example.airkast.ui.theme.MinTouchTarget
 import com.google.android.gms.oss.licenses.OssLicensesMenuActivity
 import kotlinx.coroutines.launch
 
-private const val TAB_FIND = 0
-private const val TAB_DOWNLOADS = 1
-
 /** アプリ全体のシェル: トップバー + コンテンツ + ナビゲーションバー + 浮遊ミニプレイヤー。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -2,6 +2,7 @@ package com.example.airkast.favorites
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -101,6 +102,15 @@ class FavoriteSyncWorker(context: Context, params: WorkerParameters) : Coroutine
             .setContentText(program.title)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setAutoCancel(true)
+            // 通知タップでお気に入りタブを開く
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    applicationContext,
+                    0,
+                    openFavoritesIntent(applicationContext),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                ),
+            )
             .build()
         val id = DONE_NOTIFICATION_BASE_ID + (program.id.hashCode() and 0xFFFF)
         // media3 の通知 ID(1001 など)と衝突しないよう、タグで名前空間を分ける
