@@ -2,7 +2,6 @@ package com.example.airkast.favorites
 
 import com.example.airkast.AirkastProgram
 import com.example.airkast.isProgramDownloaded
-import com.example.airkast.radikoTimestampFormat
 import java.io.File
 
 /** お気に入りと番組表から、自動ダウンロードすべき「新しい回」を判定する純粋関数。 */
@@ -34,16 +33,12 @@ object FavoriteMatcher {
         val targets = favorites.filter { it.autoDownload }.map { it.stationId to it.key }.toSet()
         if (targets.isEmpty()) return emptyList()
 
-        val format = radikoTimestampFormat()
         return programs
             .distinctBy { Triple(it.stationId, it.startTime, it.endTime) }
             .filter { (it.stationId to normalizeProgramTitle(it.title)) in targets }
             .filter { program ->
-                val start = runCatching { format.parse(program.startTime)?.time }.getOrNull()
-                val end = runCatching { format.parse(program.endTime)?.time }.getOrNull()
-                start != null && end != null &&
-                    end <= nowMs - END_MARGIN_MS &&
-                    start >= nowMs - WINDOW_MS
+                val (start, _) = program.timeRangeMs() ?: return@filter false
+                program.hasEndedForDownload(nowMs) && start >= nowMs - WINDOW_MS
             }
             .filterNot { isProgramDownloaded(downloadedFiles, it) }
             .filter { (failures[it.episodeKey] ?: 0) < MAX_ATTEMPTS }
