@@ -18,6 +18,7 @@ class DownloadRunner(private val client: AirkastClient) {
      * 番組を [outputFile] にダウンロードします。進捗は 0〜100 の整数で通知します。
      *
      * @throws IllegalArgumentException 番組の開始/終了時刻が不正な場合。
+     * @throws IllegalStateException 正常終了したのに出力ファイルが生成されなかった場合。
      */
     suspend fun run(
         program: AirkastProgram,
@@ -48,5 +49,12 @@ class DownloadRunner(private val client: AirkastClient) {
             onProgress = { onProgress((it * 100).toInt()) },
             onMuxingProgress = { onMuxingProgress((it * 100).toInt()) },
         )
+        // HlsDownloader はチャンク単位のエラーを握りつぶすため、出力が空のまま正常終了することがある
+        requireOutputFile(outputFile)
     }
+}
+
+/** ダウンロード完了後に [file] が存在し空でないことを確認する。そうでなければ失敗として扱う。 */
+internal fun requireOutputFile(file: File) {
+    check(file.exists() && file.length() > 0L) { "出力ファイルが生成されませんでした" }
 }

@@ -32,4 +32,28 @@ class DownloadRunnerTest {
             runBlocking { runner.run(program("", ""), File("unused.m4a")) }
         }
     }
+
+    @Test
+    fun requireOutputFile_failsWhenFileIsMissing() {
+        val missing = File.createTempFile("out", ".m4a").also { it.delete() }
+
+        assertFailsWith<IllegalStateException> { requireOutputFile(missing) }
+    }
+
+    @Test
+    fun requireOutputFile_failsWhenFileIsEmpty() {
+        val empty = File.createTempFile("out", ".m4a").also { it.deleteOnExit() }
+
+        assertFailsWith<IllegalStateException> { requireOutputFile(empty) }
+    }
+
+    @Test
+    fun requireOutputFile_acceptsNonEmptyFile() {
+        val file = File.createTempFile("out", ".m4a").also {
+            it.deleteOnExit()
+            it.writeBytes(byteArrayOf(1))
+        }
+
+        requireOutputFile(file)
+    }
 }
