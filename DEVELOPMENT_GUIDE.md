@@ -1,166 +1,110 @@
-# Airkast アプリ開発ガイド
+# Airkast 開発ガイド
 
-このドキュメントは、Radikoダウンローダーアプリ「Airkast」の開発者が、プロジェクトの全体像を把握し、効率的に開発を進めるためのガイドです。
+radikoのタイムフリー番組をダウンロード・再生する個人利用向けツール「Airkast」の開発者向けガイドです。
+リポジトリ全体の概要は [README.md](README.md) を参照してください。
 
----
+## 1. プロジェクト概要
 
-## 1. プロジェクト概要と目標
+| ディレクトリ | 内容 | 状態 |
+|--------------|------|------|
+| `airkast_app/` | Android アプリ (Kotlin / Jetpack Compose) | **メイン。実際に使用している唯一のクライアント** |
+| `airkast_web/` | Next.js のWeb版 (radiko へのプロキシ API + UI)。Vercel にデプロイ | 補助的に保守 |
+| `airkast_ios/` | iOS アプリ (Swift) | **現在は未使用・未メンテナンス** (削除はしていない) |
 
-radikoから過去番組（タイムフリー）をダウンロードできる、広告なしの個人利用向けAndroidアプリを開発することを目標としています。
+### 技術的な前提
+- radikoの認証は2段階 (`auth1` → `auth2`)。**PC版 (html5) 認証**を使用し、JavaScriptに公開されている鍵 (`bcd151073c03b352e1ef2fd66c32209da9ca0afa`) から部分キーを生成する。外部ファイル (APK等) への依存はない。
+- PC版認証はIPアドレスで位置を判定するため、**日本国内からのアクセスが必要**。
+- Web版を Vercel で動かす場合、リージョンを東京 (`hnd1`, `airkast_web/vercel.json`) に固定している。
 
-### 主な技術的発見
-- radikoの認証は、2段階の認証フロー（`auth1`, `auth2`）で行われる。
-- **PC版（html5）認証**を採用。JavaScriptに公開されているキー（`bcd151073c03b352e1ef2fd66c32209da9ca0afa`）を使用するため、外部ファイルへの依存がない。
-- PC版認証はIPアドレスで位置を判定するため、日本国内からのアクセスが必要。
+## 2. Androidアプリの機能
 
-### 実装済みの主な機能
-- **UI:** Jetpack ComposeによるUI。ボトムナビゲーション（Spotifyスタイル）で「番組を探す」と「ダウンロード」を切り替え。ダークモード対応（システム設定に追従）。
-- **認証:** アプリ起動後にPC版認証を実行。認証トークンはAirkastClient内部で管理。IPアドレスからエリアを自動判定。エリア手動変更機能あり。
-- **番組表:**
-    - エリア内の放送局を自動で取得し、選択可能。
-    - 過去7日間の日付を選択可能。
-    - 時間帯フィルター（早朝/昼/夜/深夜）で絞り込み。
-- **ダウンロード (バックグラウンド対応):**
-    - 過去の番組にのみ「ダウンロード」ボタンを表示。
-    - `HlsDownloadService` (Foreground Service) により、バックグラウンドでのダウンロード継続。
-    - HLSセグメントをダウンロード→復号→M4Aにmuxing。
-    - ダウンロード進捗はアプリの通知として表示。
-- **再生 (バックグラウンド対応):**
-    - ダウンロード済みファイルは「ダウンロード」タブに一覧表示。
-    - `PlayerService` (MediaLibraryService) + ExoPlayerでバックグラウンド再生。
-    - 倍速再生対応（0.5x〜2.0x）。
-    - **5段階スキップ:** 30秒戻り / 15秒戻り / 1分送り / 2分送り
-    - **再生位置の自動保存・復元**
-- **削除:**
-    - 「削除」ボタンでファイルを削除。
+- **UI:** Jetpack Compose + Material3、ダークテーマ、日本語UI。ボトムナビは「その他」「番組を探す」「ダウンロード」。「その他」メニューからエリア変更・ダウンロード分割サイズ設定・ライセンス表示を行う。
+- **認証・エリア:** 起動時にPC版認証を実行し、IPアドレスからエリアを自動判定。エリアは手動変更も可能 (`AreaSelectionDialog` に定義した12エリア)。
+- **番組表:** エリア内の放送局を選択 → 過去7日間から日付を選択 → 時間帯フィルター (早朝 5-9 / 昼 9-17 / 夜 17-24 / 深夜 24-29) で絞り込み。アプリを開いたまま日付が変わった場合は日付リストを更新する。選択した放送局・時間帯は `SharedPreferences` に保存される。
+- **ダウンロード:** 放送終了済みの番組のみ対象。`HlsDownloadService` (Foreground Service, `dataSync`) がバックグラウンドで実行し、通知に進捗を表示する。同時実行は最大3件。分割サイズ (15秒 / 60秒(推奨・既定) / 5分 / 一括) を選択可能。
+- **再生:** ダウンロード済みファイルを `PlayerService` (MediaLibraryService + ExoPlayer) で再生。倍速 (0.5x〜2.0x)、スキップ (60秒戻し / 30秒戻し / 60秒送り / 2分送り)、長押しターボ再生 (10〜200倍、既定50倍)、再生位置の自動保存・復元に対応。ストリーミング再生 (`MainViewModel.playStream` → `PlayerCommands.PLAY_STREAM`) の実装もある。
+- **削除:** ダウンロードタブから個別に削除。
 
-## 2. 開発環境のセットアップ
+## 3. 開発環境とビルド
 
-本プロジェクトを開発・実行するためには、以下の環境が必要です。
-
-- **Android Studio:** 最新版のインストールを推奨します。
-- **Java Development Kit (JDK):** Version 17以上
-- **Android SDK:** API Level 34 (Android 14) 以上
-    - `minSdk = 26`
-    - `targetSdk = 34`
-
-### 依存関係
-`app/build.gradle.kts` にて管理されています。主要なライブラリは以下の通りです。
-- **UI:** Jetpack Compose, Material3
-- **Networking:** Ktor (ktor-client-android, ktor-client-content-negotiation, ktor-serialization-kotlinx-json)
-- **Concurrency:** Kotlin Coroutines
-- **Architecture:** AndroidX ViewModel, Lifecycle
-- **Media:** AndroidX Media3 (media3-exoplayer, media3-session), AndroidX Media (MediaBrowserCompat, MediaControllerCompat)
-
-## 3. プロジェクトのビルドと実行
-
-### ビルド
-Android Studioを使用する場合、GUIから「Build」メニューのオプションを選択します。
-コマンドラインからビルドする場合は、プロジェクトのルートディレクトリで以下のGradleコマンドを実行します。
+- **JDK 17** (`airkast_app/.tool-versions`)。Gradle 8.11.1 は JDK 24 では動作しない (確認済み)。Android Studio 同梱の JBR (JDK 21) でも可。
+- **Android SDK:** `compileSdk = 36` / `targetSdk = 36` / `minSdk = 26` (`airkast_app/app/build.gradle.kts`)。`local.properties` に `sdk.dir` を設定する (Git管理外)。
+- 主な依存: Compose BOM, Ktor Client (Android エンジン), Kotlin Coroutines, AndroidX Lifecycle/ViewModel, Media3 (ExoPlayer / HLS / Session), play-services-oss-licenses。
 
 ```bash
 cd airkast_app
-./gradlew assembleDebug
+./gradlew assembleDebug        # APKビルド
+./gradlew testDebugUnitTest    # 単体テスト (JUnit4 / Ktor MockEngine / MockK)
 ```
 
-### 実行
-Android Studioを使用し、エミュレータまたは実機にデプロイして実行します。
+テストは JUnit4 で統一している。`useJUnitPlatform()` は有効にしないこと。
 
-## 4. 主要なアーキテクチャとコンポーネント
+## 4. アーキテクチャ (Android)
 
-本アプリは、モダンなAndroid開発のベストプラクティスに従い、MVVM (Model-View-ViewModel) パターンを採用しています。
+MVVM構成です。`app/src/main/java/com/example/airkast/` 以下:
 
-- **`MainActivity.kt` (View):** Jetpack Composeで構築されたUIのエントリポイント。ユーザー操作を受け取り、`MainViewModel` にイベントを伝達します。
-- **`MainViewModel.kt` (ViewModel):** UIの状態を管理し、ビジネスロジックをカプセル化します。`AirkastClient` やサービス (`HlsDownloadService`, `PlayerService`) と連携し、データの取得や操作を行います。
-- **`AirkastApplication.kt` (Application):** アプリケーションのライフサイクル全体で共有されるシングルトンオブジェクト (`AirkastClient` など) の初期化と管理を行います。
-- **`AirkastClient.kt` (Model/Data Source):** Radiko APIとの通信を担当するコアコンポーネントです。認証、番組情報の取得、ダウンロードURLの解決などを行います。
-- **`HlsDownloadService.kt` (Service):** バックグラウンドでHLSストリームのダウンロードを管理するForeground Serviceです。アプリが閉じられてもダウンロードを継続します。
-- **`PlayerService.kt` (Service):** `MediaLibraryService` として実装されており、`ExoPlayer` を使用して音声コンテンツの再生を行います。OSのメディアコントロールとの連携を提供し、バックグラウンド再生を可能にします。
-- **`PlaybackPositionManager.kt`:** 再生位置（シーク位置）の永続化を担当します。SharedPreferencesを使用して、番組ごとの再生位置を保存・復元します。
-- **`HlsDownloader.kt`:** HLSストリームの具体的なダウンロードロジックを実装します。`HlsDownloadService` から利用されます。
+| ファイル | 役割 |
+|----------|------|
+| `MainActivity.kt` / `Theme.kt` | Compose UIとテーマ。ユーザー操作を `MainViewModel` に伝える |
+| `MainViewModel.kt` | UI状態 (StateFlow) の管理。`AirkastClient`、`HlsDownloadService`、`PlayerService` (MediaController経由) と連携 |
+| `UiState.kt` | `UiState<T>` (Idle/Loading/Success/Error) と `TimeFilter` |
+| `AirkastApplication.kt` | `AirkastClient` と `PlaybackPositionManager` のシングルトン保持、`PlayerService` からのエラー通知用 SharedFlow |
+| `AirkastClient.kt` | radiko API クライアント (認証、放送局、番組表、HLS URL生成)。認証トークン・エリアIDを保持 |
+| `AirkastProgram.kt` / `AirkastStation.kt` | 番組・放送局のデータクラス (`yyyyMMddHHmmss` 形式の時刻を扱う補助も含む) |
+| `ApiException.kt` | API系エラーの sealed クラス階層 |
+| `HlsDownloader.kt` | HLSのプレイリスト解析・セグメント取得・M4Aへのmuxing |
+| `PlaybackPositionManager.kt` | 番組ごとの再生位置を `SharedPreferences` に保存・復元 |
+| `ParcelableCompat.kt` | API 33 前後の `getParcelable` 差異を吸収する拡張関数 |
+| `service/HlsDownloadService.kt` | ダウンロード用 Foreground Service。状態を静的な `downloadStates` (StateFlow) で公開 |
+| `service/PlayerService.kt` | 再生用 MediaLibraryService (ExoPlayer、位置の定期保存、通知) |
+| `service/PlayerCommands.kt` | `MainViewModel` ↔ `PlayerService` 間のカスタムコマンド名と Bundle キー |
 
-## 5. ディレクトリ構成とファイルの役割
+### 認証フロー (PC版)
+1. `auth1`: `X-Radiko-Authtoken` / `X-Radiko-KeyLength` / `X-Radiko-KeyOffset` を取得。
+2. 公開鍵の `offset` から `length` バイトを切り出して Base64 → 部分キー。
+3. `auth2`: トークンと部分キーを送り、`JP13,東京都,tokyo` 形式のエリア情報を取得 (`OUT` は圏外)。
+4. radiko.jp で得た Cookie を SmartStream (`*.smartstream.ne.jp`) のホストへ複製する (タイムフリー配信に必要)。
 
-`app/src/main/java/com/example/airkast` 以下の主要なディレクトリとファイルは以下の役割を持っています。
+### 番組表取得
+`MainViewModel` が `AirkastClient.getProgramGuide(stationId, yyyyMMdd)` を呼び、XMLを `AirkastProgram` のリストに変換して `UiState` に反映する。
 
-```
-airkast_app/app/src/main/java/com/example/airkast/
-├───service/
-│   ├───HlsDownloadService.kt  # HLSダウンロード処理をバックグラウンドで行うForeground Service
-│   └───PlayerService.kt     # 音声再生をバックグラウンドで行うMediaLibraryService (ExoPlayer利用)
-├───ApiException.kt          # API関連のエラーをラップするデータクラス
-├───HlsDownloader.kt         # HLSダウンロードのコアロジックを実装
-├───MainActivity.kt          # アプリのメインアクティビティ (Jetpack Compose UIのホスト)
-├───MainViewModel.kt         # MainActivityとUIの状態管理、ビジネスロジックの連携
-├───PlaybackPositionManager.kt # 再生位置の保存・復元管理
-├───Theme.kt                 # アプリのテーマ定義
-├───AirkastApplication.kt  # アプリケーションクラス。依存性注入 (AirkastClientのシングルトン管理)
-├───AirkastClient.kt       # Radiko APIクライアント。PC版認証、番組情報取得、ストリームURL解決
-├───AirkastProgram.kt      # Radiko番組情報を表すデータクラス
-├───AirkastStation.kt      # Radiko放送局情報を表すデータクラス
-└───UiState.kt               # UIの状態を表現するための汎用的なデータクラス
-```
+### ダウンロード
+1. 「ダウンロード」ボタン → `MainViewModel.onDownloadProgram` が `HlsDownloadService` を `startService` で起動。
+2. サービスは番組の開始〜終了を分割サイズごとのチャンクに分け、チャンクごとにタイムフリーのプレイリストURLを生成して `HlsDownloader.downloadChunked` に渡す。
+3. セグメント (ADTS AAC) をそのまま一時ファイル (`*.adts`) に追記する。**現在のコードにAES復号処理はない**。セグメントは重複排除 (クエリを除いたURLで判定) しながら結合される。
+4. 全チャンク完了後、`MediaMuxer` で M4A に変換 (進捗は「ダウンロード中」「変換中」の2段階)。変換に失敗した場合は ADTS のままファイルとして残す。
+5. 保存先は `getExternalFilesDir("downloads")`、ファイル名は `{stationId}_{title}_{startTime}_{endTime}.m4a`。
 
-## 6. Radiko認証フロー（PC版）
-
-PC版Radikoの認証は2段階で行われます。
-
-1. **`auth1`**: アプリ起動時に `AirkastClient` がRadikoサーバーに認証リクエストを送信します。
-   - レスポンスヘッダーから `X-Radiko-Authtoken`、`X-Radiko-KeyLength`、`X-Radiko-KeyOffset` を取得。
-   
-2. **Partial Key生成**: 
-   - 公開キー `bcd151073c03b352e1ef2fd66c32209da9ca0afa` の `offset` から `length` バイトを切り出し、Base64エンコード。
-   
-3. **`auth2`**: `auth1` で取得したトークンと部分キーを使用して認証を完了。
-   - レスポンスボディから `JP13,東京都,tokyo` 形式でエリア情報を取得。
-   - IPアドレスで位置を判定するため、日本国内からのアクセスが必要。
-
-認証トークンは `AirkastClient` 内部でキャッシュされ、有効期限内は再利用されます。
-
-## 7. 番組表取得機能
-
-1. ユーザーが日付と放送局を選択すると、`MainViewModel` は `AirkastClient` を介してRadiko APIから指定された条件の番組表データを取得します。
-2. `AirkastClient` はAPIからのXMLレスポンスを `AirkastProgram` オブジェクトのリストに変換し、`MainViewModel` に渡します。
-3. `MainViewModel` は取得した番組表データをUIの状態として更新し、Jetpack Composeで表示されている番組表に反映します。
-
-## 8. ダウンロード機能 (HlsDownloadService)
-
-1. ユーザーが番組の「ダウンロード」ボタンをタップすると、`MainViewModel` は `HlsDownloadService` に対してダウンロード開始の指示を出します。
-2. `HlsDownloadService` はForeground Serviceとして起動し、ダウンロード処理を開始します。
-3. 内部的に `HlsDownloader` を利用してHLSストリーム (.m3u8) を解析し、AES暗号化されたセグメントを復号しながらダウンロードします。
-4. **Muxing処理:** 復号済みのAACセグメントを `MediaMuxer` を使用してM4A形式に結合します。進捗は「ダウンロード中」と「変換中（Muxing）」の2段階で表示されます。
-5. ダウンロード完了後、ファイルはM4A形式でローカルストレージに保存されます。
-
-### タイムフリーHLS URL形式
+タイムフリーHLS URLの形式 (`AirkastClient.generateHlsUrl`):
 
 ```
-https://tf-rpaa.smartstream.ne.jp/tf/playlist.m3u8
-  ?station_id={station_id}
-  &start_at={YYYYMMDDHHmmss}
-  &end_at={YYYYMMDDHHmmss}
-  &l=15
-  &lsid={uuid}
-  &type=b
+https://tf-f-rpaa-radiko.smartstream.ne.jp/tf/playlist.m3u8
+  ?station_id={station_id}&l={duration_sec}
+  &ft={YYYYMMDDHHmmss}&to={YYYYMMDDHHmmss}
+  &start_at={ft}&end_at={to}
+  &lsid={uuid(ハイフンなし)}&type=b
 
-Headers:
-  X-Radiko-Authtoken: {token}
+Headers: X-Radiko-Authtoken: {token}
 ```
 
-## 9. 再生機能 (PlayerService, ExoPlayer)
+### 再生
+`MainViewModel` は Media3 `MediaController` で `PlayerService` に接続し、カスタムコマンド (`PlayerCommands`) で再生を指示する。AAC-ADTS では ExoPlayer が長さを返さないことがあるため、番組の開始・終了時刻から算出した長さを `GET_DURATION` で取得して UI に反映する。
 
-1. ユーザーがダウンロード済みの番組の「再生」ボタンをタップすると、`MainViewModel` は `PlayerService` に対して再生開始の指示を出します。
-2. `PlayerService` は `MediaLibraryService` として起動し、内部で `ExoPlayer` インスタンスを生成して指定されたオーディオファイルの再生を開始します。
-3. `MediaLibraryService` はAndroidのメディアフレームワークと連携し、OSの通知、ロック画面、Bluetoothデバイスなどからのメディアコントロール操作を可能にします。
-4. 再生中の状態（再生/一時停止、再生位置、バッファリングなど）は、OSのメディアコントロールとアプリのUIにリアルタイムで同期されます。
+## 5. Web版 (`airkast_web`)
 
-## 10. 既存の課題と今後の改善点
+詳細は [airkast_web/README.md](airkast_web/README.md)。ブラウザからは radiko に直接アクセスできないため、Next.js の API Routes がプロキシとして認証・番組表・HLS中継を行う。ダウンロードはブラウザ側でセグメントを順次取得し、`.aac` として保存する (M4A変換は行わない)。
 
-- **認証有効期限の考慮:** Radikoの認証トークンには有効期限がある。トークンが期限切れになった場合の再認証ロジックを検討する必要がある。
-- **ダウンロードファイル名の重複:** `program.id_program.title.m4a`の形式でファイル名を生成しているが、ファイル名が衝突する可能性がある。より堅牢なファイル命名規則を検討すべき。
-- **テストカバレッジ:** 大きな機能に対するテスト（特に`HlsDownloadService`と`PlayerService`の動作検証）の追加が必要。
-- **UIのさらなる改善:** ダウンロードと再生の進捗をより視覚的に分かりやすく表示するUI（例: プログレスバー、再生時間表示など）。
-- **複数ダウンロードの管理:** 現在は複数のダウンロードをキューイングできるが、同時実行数や優先度管理などの高度な制御は未実装。
+## 6. 既知の課題・今後の改善点
 
-## 11. Radiko対策への対応
+- 認証トークンの有効期限切れ時の再認証は未実装。
+- 複数ダウンロードの優先度管理は未実装 (同時実行数の上限のみ)。
+- `HlsDownloadService` / `PlayerService` の自動テストが不足している。
+- 有効な音声トラックが見つからない場合、M4A変換は例外を出さず出力ファイルが生成されない。
+- AndroidManifest に `FileProvider` の宣言があるが、コードからは使用していない。
+- `airkast_app/LICENSE` はプレースホルダーのまま。
 
-将来的にRadiko側が非公式アプリへの対策（API変更、キー変更、仕様変更など）を行った場合の対応策については、プロジェクトルートの `GEMINI.md` の「Radiko側の対策への対抗策」セクションを参照してください。
+## 7. radiko側の仕様変更への対応
+
+- **認証方式の変更:** PCブラウザ版のJSを解析して新しい鍵・手順を特定する。必要に応じて MITM Proxy で通信をキャプチャする。
+- **DRM強化:** Widevine 等が導入された場合、個人アプリでの対応は困難。
+- **IP制限の強化:** アプリ側での対策は限定的 (VPN等の利用はユーザーの責任)。
