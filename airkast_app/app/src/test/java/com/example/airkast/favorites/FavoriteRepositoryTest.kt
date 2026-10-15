@@ -99,4 +99,33 @@ class FavoriteRepositoryTest {
         assertEquals(listOf("OK番組"), repo.favorites().map { it.title })
         assertEquals(mapOf("TBS:2" to 4), repo.failures())
     }
+
+    @Test
+    fun twoInstancesOverSameStorageDoNotLoseConcurrentUpdates() {
+        // UI と Worker がそれぞれ別インスタンスを作るため、インスタンスをまたいでも更新が消えないことを確認する
+        val shared = MapStorage()
+        val repos = listOf(FavoriteRepository(shared), FavoriteRepository(shared))
+        val errors = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+        val threads = (0 until 4).map { t ->
+            Thread {
+                try {
+                    for (i in 0 until 50) {
+                        val id = t * 50 + i
+                        val repo = repos[t % 2]
+                        repo.add("TBS", "show-$id")
+                        repo.recordFailure("TBS:$id")
+                    }
+                } catch (e: Throwable) {
+                    errors.add(e)
+                }
+            }
+        }
+        threads.forEach { it.start() }
+        threads.forEach { it.join() }
+
+        assertTrue("thread errors: $errors", errors.isEmpty())
+        val fresh = FavoriteRepository(shared)
+        assertEquals(200, fresh.favorites().size)
+        assertEquals(200, fresh.failures().size)
+    }
 }

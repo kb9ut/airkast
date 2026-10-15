@@ -24,67 +24,72 @@ class PrefsTextStorage(context: Context) : TextStorage {
  * 保存形式はタブ区切りの行テキスト:
  * - favorites: `局ID \t 番組名 \t 自動DL(1/0)`
  * - failures:  `回のキー \t 失敗回数`
- * UI と Worker(別スレッド)の両方から使われるため、変更系は同期する。
+ * UI と Worker(別スレッド)の両方から使われ、それぞれが別インスタンスを作るため、
+ * 排他はインスタンスごとではなくプロセス全体で一つのロック([LOCK])で行う。
+ * 読み取りも書き込みもすべてこのロックの内側で実行する(読み-変更-書きの途中割り込みで更新が消えないため)。
  */
 class FavoriteRepository(private val storage: TextStorage) {
 
     companion object {
         private const val KEY_FAVORITES = "favorites"
         private const val KEY_FAILURES = "failures"
+
+        /** 同じ SharedPreferences を扱う全インスタンスで共有する排他ロック。 */
+        private val LOCK = Any()
     }
 
-    @Synchronized
-    fun favorites(): List<Favorite> = parseLines(storage.read(KEY_FAVORITES)) { cols ->
-        if (cols.size != 3 || cols[0].isBlank() || cols[1].isBlank()) return@parseLines null
-        val auto = when (cols[2]) {
-            "1" -> true
-            "0" -> false
-            else -> return@parseLines null
+    fun favorites(): List<Favorite> = synchronized(LOCK) {
+        parseLines(storage.read(KEY_FAVORITES)) { cols ->
+            if (cols.size != 3 || cols[0].isBlank() || cols[1].isBlank()) return@parseLines null
+            val auto = when (cols[2]) {
+                "1" -> true
+                "0" -> false
+                else -> return@parseLines null
+            }
+            Favorite(cols[0], cols[1], auto)
         }
-        Favorite(cols[0], cols[1], auto)
     }
 
-    @Synchronized
-    fun isFavorite(stationId: String, title: String): Boolean =
+    fun isFavorite(stationId: String, title: String): Boolean = synchronized(LOCK) {
         favorites().any { it.matches(stationId, title) }
-
-    @Synchronized
-    fun add(stationId: String, title: String) {
-        val current = favorites()
-        if (current.any { it.matches(stationId, title) }) return
-        saveFavorites(current + Favorite(stationId, sanitize(title)))
     }
 
-    @Synchronized
-    fun remove(stationId: String, title: String) {
+    fun add(stationId: String, title: String) {
+        synchronized(LOCK) {
+            val current = favorites()
+            if (current.any { it.matches(stationId, title) }) return
+            saveFavorites(current + Favorite(stationId, sanitize(title)))
+        }
+    }
+
+    fun remove(stationId: String, title: String) = synchronized(LOCK) {
         saveFavorites(favorites().filterNot { it.matches(stationId, title) })
     }
 
-    @Synchronized
-    fun setAutoDownload(stationId: String, title: String, enabled: Boolean) {
+    fun setAutoDownload(stationId: String, title: String, enabled: Boolean) = synchronized(LOCK) {
         saveFavorites(favorites().map {
             if (it.matches(stationId, title)) it.copy(autoDownload = enabled) else it
         })
     }
 
-    @Synchronized
-    fun hasAutoDownload(): Boolean = favorites().any { it.autoDownload }
+    fun hasAutoDownload(): Boolean = synchronized(LOCK) {
+        favorites().any { it.autoDownload }
+    }
 
-    @Synchronized
-    fun failures(): Map<String, Int> = parseLines(storage.read(KEY_FAILURES)) { cols ->
-        val count = cols.getOrNull(1)?.toIntOrNull()
-        if (cols.size != 2 || cols[0].isBlank() || count == null) null else cols[0] to count
-    }.toMap()
+    fun failures(): Map<String, Int> = synchronized(LOCK) {
+        parseLines(storage.read(KEY_FAILURES)) { cols ->
+            val count = cols.getOrNull(1)?.toIntOrNull()
+            if (cols.size != 2 || cols[0].isBlank() || count == null) null else cols[0] to count
+        }.toMap()
+    }
 
-    @Synchronized
-    fun recordFailure(episodeKey: String) {
+    fun recordFailure(episodeKey: String) = synchronized(LOCK) {
         val current = failures().toMutableMap()
         current[episodeKey] = (current[episodeKey] ?: 0) + 1
         saveFailures(current)
     }
 
-    @Synchronized
-    fun clearFailure(episodeKey: String) {
+    fun clearFailure(episodeKey: String) = synchronized(LOCK) {
         val current = failures().toMutableMap()
         if (current.remove(episodeKey) != null) saveFailures(current)
     }
