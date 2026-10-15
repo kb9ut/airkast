@@ -1,15 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { DEFAULT_HEADERS } from "@/lib/radiko";
 
 export const maxDuration = 30;
-
-const DEFAULT_HEADERS: Record<string, string> = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "X-Radiko-App": "pc_html5",
-  "X-Radiko-App-Version": "0.0.1",
-  "X-Radiko-User": "dummy_user",
-  "X-Radiko-Device": "pc",
-};
 
 function resolveUrl(baseUrl: string, relativeUrl: string): string {
   if (relativeUrl.startsWith("http")) return relativeUrl;

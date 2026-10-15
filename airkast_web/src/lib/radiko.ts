@@ -3,9 +3,11 @@
  * Handles PC-version authentication and API calls.
  */
 
+import type { Program, Station } from "./types";
+
 const PC_FULL_KEY = "bcd151073c03b352e1ef2fd66c32209da9ca0afa";
 
-const DEFAULT_HEADERS: Record<string, string> = {
+export const DEFAULT_HEADERS: Record<string, string> = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "X-Radiko-App": "pc_html5",
@@ -23,20 +25,12 @@ export interface AuthSession {
   cookies: string[];
 }
 
-export interface Station {
-  id: string;
-  name: string;
-}
-
-export interface Program {
-  id: string;
-  stationId: string;
-  startTime: string;
-  endTime: string;
-  title: string;
-  description: string;
-  performer: string;
-  imageUrl: string | null;
+function collectSetCookies(res: Response, into: string[]): void {
+  res.headers.forEach((value, key) => {
+    if (key.toLowerCase() === "set-cookie") {
+      into.push(value);
+    }
+  });
 }
 
 /**
@@ -55,13 +49,8 @@ export async function authenticate(): Promise<AuthSession> {
 
   if (!authToken) throw new Error("Missing X-Radiko-Authtoken header");
 
-  // Collect cookies from auth1
   const cookies: string[] = [];
-  auth1Res.headers.forEach((value, key) => {
-    if (key.toLowerCase() === "set-cookie") {
-      cookies.push(value);
-    }
-  });
+  collectSetCookies(auth1Res, cookies);
 
   // Step 2: Generate partial key
   const keyBytes = Buffer.from(PC_FULL_KEY, "utf-8");
@@ -82,13 +71,7 @@ export async function authenticate(): Promise<AuthSession> {
   if (!auth2Res.ok) {
     throw new Error(`auth2 failed: HTTP ${auth2Res.status}`);
   }
-
-  // Collect cookies from auth2 too
-  auth2Res.headers.forEach((value, key) => {
-    if (key.toLowerCase() === "set-cookie") {
-      cookies.push(value);
-    }
-  });
+  collectSetCookies(auth2Res, cookies);
 
   const body = (await auth2Res.text()).trim();
   if (body === "OUT") {
@@ -168,90 +151,3 @@ export async function getProgramGuide(stationId: string, date: string): Promise<
   if (!res.ok) throw new Error(`getProgramGuide failed: HTTP ${res.status}`);
   return parseProgramGuideXml(await res.text(), stationId);
 }
-
-/**
- * Generate HLS stream URL for a timefree program.
- */
-export function generateHlsUrl(program: Program, lsid?: string): string {
-  const finalLsid = lsid || crypto.randomUUID().replace(/-/g, "");
-  const ft = program.startTime;
-  const to = program.endTime;
-
-  // Parse duration
-  const parseTime = (t: string) => {
-    const y = parseInt(t.slice(0, 4));
-    const m = parseInt(t.slice(4, 6)) - 1;
-    const d = parseInt(t.slice(6, 8));
-    const h = parseInt(t.slice(8, 10));
-    const min = parseInt(t.slice(10, 12));
-    const s = parseInt(t.slice(12, 14));
-    return new Date(y, m, d, h, min, s).getTime();
-  };
-
-  const durationSeconds = Math.floor((parseTime(to) - parseTime(ft)) / 1000);
-
-  return (
-    `https://tf-f-rpaa-radiko.smartstream.ne.jp/tf/playlist.m3u8` +
-    `?station_id=${program.stationId}` +
-    `&l=${durationSeconds}` +
-    `&ft=${ft}` +
-    `&to=${to}` +
-    `&start_at=${ft}` +
-    `&end_at=${to}` +
-    `&lsid=${finalLsid}` +
-    `&type=b`
-  );
-}
-
-/**
- * Area list for Japan.
- */
-export const AREA_LIST = [
-  { id: "JP1", name: "北海道" },
-  { id: "JP2", name: "青森" },
-  { id: "JP3", name: "岩手" },
-  { id: "JP4", name: "宮城" },
-  { id: "JP5", name: "秋田" },
-  { id: "JP6", name: "山形" },
-  { id: "JP7", name: "福島" },
-  { id: "JP8", name: "茨城" },
-  { id: "JP9", name: "栃木" },
-  { id: "JP10", name: "群馬" },
-  { id: "JP11", name: "埼玉" },
-  { id: "JP12", name: "千葉" },
-  { id: "JP13", name: "東京" },
-  { id: "JP14", name: "神奈川" },
-  { id: "JP15", name: "新潟" },
-  { id: "JP16", name: "富山" },
-  { id: "JP17", name: "石川" },
-  { id: "JP18", name: "福井" },
-  { id: "JP19", name: "山梨" },
-  { id: "JP20", name: "長野" },
-  { id: "JP21", name: "岐阜" },
-  { id: "JP22", name: "静岡" },
-  { id: "JP23", name: "愛知" },
-  { id: "JP24", name: "三重" },
-  { id: "JP25", name: "滋賀" },
-  { id: "JP26", name: "京都" },
-  { id: "JP27", name: "大阪" },
-  { id: "JP28", name: "兵庫" },
-  { id: "JP29", name: "奈良" },
-  { id: "JP30", name: "和歌山" },
-  { id: "JP31", name: "鳥取" },
-  { id: "JP32", name: "島根" },
-  { id: "JP33", name: "岡山" },
-  { id: "JP34", name: "広島" },
-  { id: "JP35", name: "山口" },
-  { id: "JP36", name: "徳島" },
-  { id: "JP37", name: "香川" },
-  { id: "JP38", name: "愛媛" },
-  { id: "JP39", name: "高知" },
-  { id: "JP40", name: "福岡" },
-  { id: "JP41", name: "佐賀" },
-  { id: "JP42", name: "長崎" },
-  { id: "JP43", name: "熊本" },
-  { id: "JP44", name: "大分" },
-  { id: "JP45", name: "宮崎" },
-  { id: "JP46", name: "鹿児島" },
-  { id: "JP47", name: "沖縄" },
-];

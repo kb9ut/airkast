@@ -73,8 +73,6 @@ export default function Home() {
 
   const [message, setMessage] = useState<string | null>(null);
 
-  const selectedStation = stations.find((s) => s.id === selectedStationId);
-
   useEffect(() => {
     (async () => {
       try {

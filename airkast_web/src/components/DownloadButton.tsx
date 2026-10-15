@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { buildTimefreeHlsUrl } from "@/lib/hls";
+import { parseRadikoTime, toRadikoTime } from "@/lib/types";
 import type { Program } from "@/lib/types";
 
 interface DownloadButtonProps {
@@ -9,6 +11,88 @@ interface DownloadButtonProps {
 }
 
 type DownloadState = "idle" | "fetching_playlist" | "downloading" | "done" | "error";
+
+/** Timefree playlists are requested in chunks of this many milliseconds. */
+const CHUNK_DURATION_MS = 300 * 1000;
+
+function newLsid(): string {
+  return crypto.randomUUID().replace(/-/g, "");
+}
+
+async function fetchChunkSegments(hlsUrl: string, authToken: string): Promise<string[]> {
+  const res = await fetch(
+    `/api/playlist?url=${encodeURIComponent(hlsUrl)}&authToken=${encodeURIComponent(authToken)}`
+  );
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data.segments;
+}
+
+/**
+ * Collects the segment URLs of the whole program by requesting the timefree
+ * playlist in fixed-size chunks. Segments repeated across chunks are skipped.
+ */
+async function fetchAllSegmentUrls(program: Program, authToken: string): Promise<string[]> {
+  const lsid = newLsid();
+  const endMs = parseRadikoTime(program.endTime);
+  const segmentUrls: string[] = [];
+  const seen = new Set<string>();
+
+  let chunkStart = parseRadikoTime(program.startTime);
+  while (chunkStart < endMs) {
+    const chunkEnd = Math.min(chunkStart + CHUNK_DURATION_MS, endMs);
+    const hlsUrl = buildTimefreeHlsUrl(
+      program.stationId,
+      toRadikoTime(chunkStart),
+      toRadikoTime(chunkEnd),
+      Math.floor((chunkEnd - chunkStart) / 1000),
+      lsid
+    );
+
+    for (const seg of await fetchChunkSegments(hlsUrl, authToken)) {
+      const segId = seg.split("?")[0];
+      if (!seen.has(segId)) {
+        seen.add(segId);
+        segmentUrls.push(seg);
+      }
+    }
+    chunkStart = chunkEnd;
+  }
+  return segmentUrls;
+}
+
+async function downloadSegments(
+  segmentUrls: string[],
+  authToken: string,
+  onProgress: (percent: number) => void
+): Promise<Blob> {
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  for (let i = 0; i < segmentUrls.length; i++) {
+    const res = await fetch(
+      `/api/stream?url=${encodeURIComponent(segmentUrls[i])}&authToken=${encodeURIComponent(authToken)}`
+    );
+    if (!res.ok) throw new Error(`Segment ${i + 1} failed`);
+    chunks.push(new Uint8Array(await res.arrayBuffer()));
+    onProgress(Math.round(((i + 1) / segmentUrls.length) * 100));
+  }
+  return new Blob(chunks, { type: "audio/aac" });
+}
+
+function saveBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadFileName(program: Program): string {
+  const safeTitle = (program.title || program.id).replace(/[/\\:*?"<>|]/g, "_");
+  return `${program.stationId}_${program.startTime}_${safeTitle}.aac`;
+}
 
 export default function DownloadButton({ program, authToken }: DownloadButtonProps) {
   const [state, setState] = useState<DownloadState>("idle");
@@ -21,100 +105,14 @@ export default function DownloadButton({ program, authToken }: DownloadButtonPro
     setError(null);
 
     try {
-      const lsid = crypto.randomUUID().replace(/-/g, "");
-      const ft = program.startTime;
-      const to = program.endTime;
-
-      const parseTime = (t: string) => {
-        const y = parseInt(t.slice(0, 4));
-        const m = parseInt(t.slice(4, 6)) - 1;
-        const d = parseInt(t.slice(6, 8));
-        const h = parseInt(t.slice(8, 10));
-        const min = parseInt(t.slice(10, 12));
-        const s = parseInt(t.slice(12, 14));
-        return new Date(y, m, d, h, min, s).getTime();
-      };
-
-      const chunkDurationMs = 300 * 1000;
-      const allSegmentUrls: string[] = [];
-      let currentStart = parseTime(ft);
-      const endMs = parseTime(to);
-
-      while (currentStart < endMs) {
-        const currentEnd = Math.min(currentStart + chunkDurationMs, endMs);
-        const durationSeconds = Math.floor((currentEnd - currentStart) / 1000);
-        const fmtTs = (ms: number) => {
-          const d = new Date(ms);
-          return (
-            d.getFullYear().toString() +
-            String(d.getMonth() + 1).padStart(2, "0") +
-            String(d.getDate()).padStart(2, "0") +
-            String(d.getHours()).padStart(2, "0") +
-            String(d.getMinutes()).padStart(2, "0") +
-            String(d.getSeconds()).padStart(2, "0")
-          );
-        };
-        const chunkFt = fmtTs(currentStart);
-        const chunkTo = fmtTs(currentEnd);
-        const hlsUrl =
-          `https://tf-f-rpaa-radiko.smartstream.ne.jp/tf/playlist.m3u8` +
-          `?station_id=${program.stationId}` +
-          `&l=${durationSeconds}` +
-          `&ft=${chunkFt}&to=${chunkTo}` +
-          `&start_at=${chunkFt}&end_at=${chunkTo}` +
-          `&lsid=${lsid}&type=b`;
-
-        const playlistRes = await fetch(
-          `/api/playlist?url=${encodeURIComponent(hlsUrl)}&authToken=${encodeURIComponent(authToken)}`
-        );
-        const playlistData = await playlistRes.json();
-        if (playlistData.error) throw new Error(playlistData.error);
-
-        for (const seg of playlistData.segments) {
-          const segId = seg.split("?")[0];
-          if (!allSegmentUrls.some((s) => s.split("?")[0] === segId)) {
-            allSegmentUrls.push(seg);
-          }
-        }
-        currentStart = currentEnd;
-      }
-
-      if (allSegmentUrls.length === 0) {
+      const segmentUrls = await fetchAllSegmentUrls(program, authToken);
+      if (segmentUrls.length === 0) {
         throw new Error("No segments found");
       }
 
       setState("downloading");
-
-      const chunks: Uint8Array[] = [];
-      for (let i = 0; i < allSegmentUrls.length; i++) {
-        const segUrl = allSegmentUrls[i];
-        const res = await fetch(
-          `/api/stream?url=${encodeURIComponent(segUrl)}&authToken=${encodeURIComponent(authToken)}`
-        );
-        if (!res.ok) throw new Error(`Segment ${i + 1} failed`);
-        const data = new Uint8Array(await res.arrayBuffer());
-        chunks.push(data);
-        setProgress(Math.round(((i + 1) / allSegmentUrls.length) * 100));
-      }
-
-      const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
-      const result = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        result.set(chunk, offset);
-        offset += chunk.length;
-      }
-
-      const blob = new Blob([result], { type: "audio/aac" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const safeTitle = (program.title || program.id).replace(/[/\\:*?"<>|]/g, "_");
-      a.download = `${program.stationId}_${program.startTime}_${safeTitle}.aac`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const blob = await downloadSegments(segmentUrls, authToken, setProgress);
+      saveBlob(blob, downloadFileName(program));
 
       setState("done");
       setTimeout(() => setState("idle"), 3000);
