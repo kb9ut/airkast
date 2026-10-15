@@ -4,6 +4,7 @@ import android.app.Application
 import com.example.airkast.AirkastProgram
 import com.example.airkast.radikoTimestampFormat
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -49,6 +50,17 @@ class FavoritesViewModelTest {
         override suspend fun programs(stationId: String, date: String): List<AirkastProgram> {
             requests += stationId to date
             return onRequest(stationId, date)
+        }
+    }
+
+    /** 番組表の取得を [gate] が完了するまで止めるフェイク(取得中の状態を作る)。 */
+    private class GatedGuides : GuideSource {
+        val gate = CompletableDeferred<Unit>()
+        val requests = mutableListOf<Pair<String, String>>()
+        override suspend fun programs(stationId: String, date: String): List<AirkastProgram> {
+            requests += stationId to date
+            gate.await()
+            return emptyList()
         }
     }
 
@@ -208,5 +220,49 @@ class FavoritesViewModelTest {
         vm.refresh(force = true)
 
         assertEquals(16, guides.requests.count { it.first == "TBS" })
+    }
+
+    @Test
+    fun forcedRefreshWhileAnotherForcedRefreshIsRunningIsIgnored() {
+        val guides = GatedGuides()
+        val vm = viewModel(guides)
+        repository.add("TBS", "A") // VM を通さずに追加(取得は起動しない)
+
+        vm.refresh(force = true) // 最初のリクエストで止まる
+        vm.refresh(force = true) // 実行中なので無視される
+        guides.gate.complete(Unit)
+
+        assertEquals(8, guides.requests.count { it.first == "TBS" })
+    }
+
+    @Test
+    fun forcedRefreshAfterTheFirstOneFinishesFetchesAgain() {
+        val guides = GatedGuides()
+        val vm = viewModel(guides)
+        repository.add("TBS", "A")
+        vm.refresh(force = true)
+        guides.gate.complete(Unit)
+        assertEquals(8, guides.requests.count { it.first == "TBS" })
+
+        vm.refresh(force = true)
+
+        assertEquals(16, guides.requests.count { it.first == "TBS" })
+    }
+
+    @Test
+    fun addingAFavoriteDuringAForcedRefreshStillFetchesItsStation() {
+        val guides = GatedGuides()
+        val vm = viewModel(guides)
+        repository.add("TBS", "A")
+        vm.refresh(force = true) // TBS の最初のリクエストで止まる
+
+        vm.addFavorite("QRR", "B") // 強制更新中でも、追加分の取得(非強制)は走る
+        guides.gate.complete(Unit)
+
+        assertEquals(8, guides.requests.count { it.first == "QRR" })
+        assertEquals(
+            FavoriteRowStatus.NO_RECENT_EPISODE,
+            vm.rows.value.first { it.favorite.stationId == "QRR" }.status,
+        )
     }
 }

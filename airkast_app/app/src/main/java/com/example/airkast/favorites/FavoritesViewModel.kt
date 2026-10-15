@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.airkast.AirkastApplication
 import com.example.airkast.AirkastProgram
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,6 +56,9 @@ open class FavoritesViewModel(
     /** 取得済みの最新回(キーは [favoriteKeyOf])。Main スレッドからのみ触る。 */
     private val latestCache = mutableMapOf<String, FavoriteRow>()
 
+    /** 実行中の強制更新。重複した強制更新(起動・復帰・タブ表示)を 1 つにまとめるために保持する。 */
+    private var forceJob: Job? = null
+
     init {
         publish()
         refresh(force = false)
@@ -88,7 +92,9 @@ open class FavoritesViewModel(
      * 局ごとに直近 8 日分の番組表を取得し、局単位の失敗はその局の行だけに影響させる。
      */
     fun refresh(force: Boolean = true) {
-        viewModelScope.launch {
+        // 強制更新は同時に 1 つだけ(古い更新が新しい結果を上書きしない)。非強制は常に走らせ、追加直後のお気に入りも取得する
+        if (force && forceJob?.isActive == true) return
+        val job = viewModelScope.launch {
             val favorites = repository.favorites()
             val targets = if (force) favorites else favorites.filter { favoriteKeyOf(it.stationId, it.title) !in latestCache }
             val nowMs = now()
@@ -121,6 +127,7 @@ open class FavoritesViewModel(
             }
             publish()
         }
+        if (force) forceJob = job
     }
 
     private fun onFavoritesChanged(syncNow: Boolean) {
