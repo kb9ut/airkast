@@ -51,8 +51,9 @@ class FavoriteSyncTest {
         guides: GuideSource,
         downloader: EpisodeDownloader,
         downloaded: List<File> = emptyList(),
-        isDownloading: (AirkastProgram) -> Boolean = { false },
-    ) = FavoriteSync(repo, guides, downloader, { downloaded }, isDownloading, { now })
+        claim: (AirkastProgram) -> Boolean = { true },
+        release: (AirkastProgram) -> Unit = {},
+    ) = FavoriteSync(repo, guides, downloader, { downloaded }, claim, release, { now })
 
     @Test
     fun recentDatesListsToday_andSevenPreviousDays() {
@@ -108,7 +109,7 @@ class FavoriteSyncTest {
         val guides = FakeGuides { _, date -> if (date == "20260124") listOf(prog()) else emptyList() }
         val downloader = FakeDownloader()
 
-        sync(guides, downloader, isDownloading = { it.id == prog().id }).run()
+        sync(guides, downloader, claim = { it.id != prog().id }).run()
 
         assertTrue(downloader.downloaded.isEmpty())
     }
@@ -219,7 +220,7 @@ class FavoriteSyncTest {
             busy += listOf(first, second).first { it != program }.id
         }
 
-        val report = sync(twoDayGuides, downloader, isDownloading = { it.id in busy }).run()
+        val report = sync(twoDayGuides, downloader, claim = { it.id !in busy }).run()
 
         assertEquals(1, downloader.downloaded.size)
         assertEquals(downloader.downloaded, report.downloaded)
@@ -241,6 +242,78 @@ class FavoriteSyncTest {
         assertEquals(1, downloader.downloaded.size)
         assertEquals(downloader.downloaded, report.downloaded)
         assertTrue(report.failed.isEmpty())
+        assertTrue(repo.failures().isEmpty())
+    }
+
+    @Test
+    fun releasesTheClaimAfterSuccessFailureAndCancellation() = runBlocking {
+        val first = prog(start = "20260122220000", end = "20260122230000")
+        val second = prog(start = "20260123220000", end = "20260123230000")
+        val third = prog(start = "20260124220000", end = "20260124230000")
+        val guides = FakeGuides { _, date ->
+            when (date) {
+                "20260122" -> listOf(first)
+                "20260123" -> listOf(second)
+                "20260124" -> listOf(third)
+                else -> emptyList()
+            }
+        }
+        val claimed = mutableListOf<String>()
+        val released = mutableListOf<String>()
+        val downloader = FakeDownloader {
+            when (it) {
+                second -> throw java.io.IOException("boom")
+                third -> throw CancellationException("stopped")
+            }
+        }
+
+        assertFailsWith<CancellationException> {
+            sync(
+                guides, downloader,
+                claim = { claimed += it.id; true },
+                release = { released += it.id },
+            ).run()
+        }
+
+        // 成功(first)・失敗(second)・キャンセル(third)のどれでも、予約した回は必ず解放される
+        assertEquals(listOf(first.id, second.id, third.id), claimed)
+        assertEquals(claimed, released)
+    }
+
+    @Test
+    fun unclaimedEpisodeIsSkippedWithoutFailureOrRelease() = runBlocking {
+        val guides = FakeGuides { _, date -> if (date == "20260124") listOf(prog()) else emptyList() }
+        val downloader = FakeDownloader()
+        val released = mutableListOf<String>()
+
+        val report = sync(guides, downloader, claim = { false }, release = { released += it.id }).run()
+
+        assertTrue(downloader.downloaded.isEmpty())
+        assertTrue(report.failed.isEmpty())
+        assertTrue(repo.failures().isEmpty())
+        assertTrue(released.isEmpty())
+    }
+
+    @Test
+    fun episodeThatBecameDownloadedAfterClaimingIsReleasedAndSkipped() = runBlocking {
+        val guides = FakeGuides { _, date -> if (date == "20260124") listOf(prog()) else emptyList() }
+        val downloader = FakeDownloader()
+        val released = mutableListOf<String>()
+        // 予約を取るまでの間に別の処理が保存を終えた状況(予約後の再確認で見つかる)
+        val file = File("TBS_アフター6_20260124220000_20260124230000.m4a")
+        var calls = 0
+        val sync = FavoriteSync(
+            repo, guides, downloader,
+            downloadedFiles = { if (calls++ == 0) emptyList() else listOf(file) },
+            claim = { true },
+            release = { released += it.id },
+            now = { now },
+        )
+
+        sync.run()
+
+        assertTrue(downloader.downloaded.isEmpty())
+        assertEquals(listOf(prog().id), released)
         assertTrue(repo.failures().isEmpty())
     }
 }

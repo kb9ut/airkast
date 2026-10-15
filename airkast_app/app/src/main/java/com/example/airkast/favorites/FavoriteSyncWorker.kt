@@ -12,6 +12,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.example.airkast.AirkastClient
 import com.example.airkast.AirkastProgram
+import com.example.airkast.DownloadRegistry
 import com.example.airkast.DownloadRunner
 import com.example.airkast.service.HlsDownloadService
 import kotlinx.coroutines.CancellationException
@@ -73,7 +74,8 @@ class FavoriteSyncWorker(context: Context, params: WorkerParameters) : Coroutine
             guides = ClientGuideSource(client),
             downloader = RunnerEpisodeDownloader(applicationContext, DownloadRunner(client)),
             downloadedFiles = { downloadedFiles() },
-            isDownloading = { isDownloadingManually(it) },
+            claim = { DownloadRegistry.tryClaim(it.episodeKey) },
+            release = { DownloadRegistry.release(it.episodeKey) },
         )
         val report = try {
             sync.run { program, percent ->
@@ -92,15 +94,6 @@ class FavoriteSyncWorker(context: Context, params: WorkerParameters) : Coroutine
 
     private fun downloadedFiles(): List<File> =
         applicationContext.getExternalFilesDir("downloads")?.listFiles()?.toList().orEmpty()
-
-    /** 画面から手動ダウンロード中の回を、自動ダウンロードが重複して始めないための判定。 */
-    private fun isDownloadingManually(program: AirkastProgram): Boolean =
-        when (HlsDownloadService.downloadStates.value[program.id]) {
-            is HlsDownloadService.DownloadStatus.Pending,
-            is HlsDownloadService.DownloadStatus.InProgress,
-            is HlsDownloadService.DownloadStatus.Muxing -> true
-            else -> false
-        }
 
     private fun notifyDownloaded(program: AirkastProgram) {
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)

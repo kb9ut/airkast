@@ -46,7 +46,10 @@ class FavoriteSync(
     private val guides: GuideSource,
     private val downloader: EpisodeDownloader,
     private val downloadedFiles: () -> List<File>,
-    private val isDownloading: (AirkastProgram) -> Boolean = { false },
+    /** 回の書き込み権を予約する。取れなければ(他の処理が書き込み中)その回はスキップする。 */
+    private val claim: (AirkastProgram) -> Boolean = { true },
+    /** [claim] で取った予約を解放する。 */
+    private val release: (AirkastProgram) -> Unit = {},
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     suspend fun run(onProgress: (AirkastProgram, Int) -> Unit = { _, _ -> }): SyncReport {
@@ -76,25 +79,30 @@ class FavoriteSync(
 
         val candidates = FavoriteMatcher
             .findNewEpisodes(favorites, programs, nowMs, downloadedFiles(), repository.failures())
-            .filterNot { isDownloading(it) }
 
         val downloaded = mutableListOf<AirkastProgram>()
         val failed = mutableListOf<AirkastProgram>()
         for (program in candidates) {
-            // ダウンロードは順番に長時間かかるので、実行直前に手動ダウンロードや保存済みを再確認する
-            if (isDownloading(program) || isProgramDownloaded(downloadedFiles(), program)) continue
-            // 試行は開始前に数える。中断(キャンセル/プロセス終了)された試行も MAX_ATTEMPTS に含め、
-            // 長すぎる回が古い順の先頭で毎回後続をブロックし続けないようにする
-            repository.recordFailure(program.episodeKey)
+            // 手動ダウンロードなど他の処理が書き込み中なら、その回は次の周期に回す(失敗には数えない)
+            if (!claim(program)) continue
             try {
-                downloader.download(program) { onProgress(program, it) }
-                repository.clearFailure(program.episodeKey)
-                downloaded += program
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "自動ダウンロードに失敗: ${program.title}: ${e.message}")
-                failed += program
+                // 予約を取るまでの間に別の処理が保存を終えているかもしれないので、予約後に再確認する
+                if (isProgramDownloaded(downloadedFiles(), program)) continue
+                // 試行は開始前に数える。中断(キャンセル/プロセス終了)された試行も MAX_ATTEMPTS に含め、
+                // 長すぎる回が古い順の先頭で毎回後続をブロックし続けないようにする
+                repository.recordFailure(program.episodeKey)
+                try {
+                    downloader.download(program) { onProgress(program, it) }
+                    repository.clearFailure(program.episodeKey)
+                    downloaded += program
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "自動ダウンロードに失敗: ${program.title}: ${e.message}")
+                    failed += program
+                }
+            } finally {
+                release(program)
             }
         }
         return SyncReport(downloaded, failed, stations.size, stationsFailed)
