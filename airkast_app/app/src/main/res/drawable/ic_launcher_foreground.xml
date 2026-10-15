@@ -1,56 +1,58 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector
-    android:height="108dp"
+    xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
-    android:viewportHeight="108"
+    android:height="108dp"
     android:viewportWidth="108"
-    xmlns:android="http://schemas.android.com/apk/res/android">
+    android:viewportHeight="108">
 
-    <!-- Bold "A" frame - modern rounded stroke style -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M35,76 L54,33 L73,76"
-        android:strokeColor="#1DB954"
-        android:strokeWidth="8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"/>
+    <!-- セーフゾーン(中央 66dp の円)に収めるため 0.92 倍 -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.92"
+        android:scaleY="0.92">
 
-    <!-- A crossbar -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M42,61 L66,61"
-        android:strokeColor="#1DB954"
-        android:strokeWidth="5.5"
-        android:strokeLineCap="round"/>
+        <!-- 太い丸線の「A」 -->
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M35,76 L54,33 L73,76"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="8"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
 
-    <!-- Broadcast point at A peak -->
-    <path
-        android:fillColor="#1ED760"
-        android:pathData="M54,31m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"/>
+        <!-- 横棒 -->
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M42,61 L66,61"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="5.5"
+            android:strokeLineCap="round" />
 
-    <!-- Radio signal arc - inner -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M61,30 A5,5 0 0,1 61,38"
-        android:strokeColor="#1ED760"
-        android:strokeWidth="2.8"
-        android:strokeLineCap="round"/>
+        <!-- 放送点 -->
+        <path
+            android:fillColor="#FFFFB5A0"
+            android:pathData="M54,31m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
 
-    <!-- Radio signal arc - middle -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M64,27 A8,8 0 0,1 64,41"
-        android:strokeColor="#1ED760"
-        android:strokeWidth="2.4"
-        android:strokeLineCap="round"
-        android:strokeAlpha="0.8"/>
-
-    <!-- Radio signal arc - outer -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M67,24 A11,11 0 0,1 67,44"
-        android:strokeColor="#1ED760"
-        android:strokeWidth="2.0"
-        android:strokeLineCap="round"
-        android:strokeAlpha="0.6"/>
+        <!-- 電波アーク(内→外) -->
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M61,30 A5,5 0 0,1 61,38"
+            android:strokeColor="#FFFFB5A0"
+            android:strokeWidth="2.8"
+            android:strokeLineCap="round" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M64,27 A8,8 0 0,1 64,41"
+            android:strokeColor="#FFFFB5A0"
+            android:strokeWidth="2.4"
+            android:strokeLineCap="round" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M67,24 A11,11 0 0,1 67,44"
+            android:strokeColor="#FFFFB5A0"
+            android:strokeWidth="2.0"
+            android:strokeLineCap="round" />
+    </group>
 </vector>

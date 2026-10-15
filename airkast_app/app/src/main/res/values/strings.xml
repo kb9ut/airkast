@@ -1,3 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Airkast</string>
+
+    <!-- ナビゲーション / トップバー -->
+    <string name="nav_find">番組を探す</string>
+    <string name="nav_downloads">ダウンロード</string>
+    <string name="menu_more">メニュー</string>
+    <string name="menu_area">エリア変更</string>
+    <string name="menu_download_settings">ダウンロード設定</string>
+    <string name="menu_licenses">ライセンス情報</string>
+
+    <!-- 番組を探す -->
+    <string name="auth_loading">認証中...</string>
+    <string name="connect_error_title">接続エラー</string>
+    <string name="connect_error_fallback">接続に失敗しました</string>
+    <string name="auth_idle_title">放送局を取得します</string>
+    <string name="auth_and_fetch">認証＆放送局取得</string>
+    <string name="retry">再試行</string>
+    <string name="program_error">番組表を取得できませんでした</string>
+    <string name="no_programs">この時間帯の番組はありません</string>
+    <string name="hint_select_station">放送局を選択してください</string>
+    <string name="hint_select_date">日付を選択してください</string>
+    <string name="station_label">放送局</string>
+    <string name="station_placeholder">放送局を選択</string>
+    <string name="date_today">今日</string>
+    <string name="filter_early_morning">早朝 5-9</string>
+    <string name="filter_daytime">昼 9-17</string>
+    <string name="filter_night">夜 17-24</string>
+    <string name="filter_midnight">深夜 24-29</string>
+    <string name="program_not_downloadable">放送終了後にダウンロードできます</string>
+
+    <!-- ダウンロードボタン -->
+    <string name="cd_download">「%1$s」をダウンロード</string>
+    <string name="cd_downloaded">「%1$s」はダウンロード済み</string>
+    <string name="cd_download_queued">「%1$s」は待機中</string>
+    <string name="cd_download_failed">「%1$s」のダウンロードに失敗しました。タップで再試行</string>
+    <string name="state_downloading">ダウンロード中 %1$d%%</string>
+    <string name="state_muxing">変換中 %1$d%%</string>
+    <string name="state_pending">待機中</string>
+
+    <!-- ダウンロード画面 -->
+    <string name="section_ongoing">ダウンロード中</string>
+    <string name="section_downloaded">ダウンロード済み</string>
+    <string name="refresh">更新</string>
+    <string name="cancel_download">中止</string>
+    <string name="cd_cancel_download">「%1$s」のダウンロードを中止</string>
+    <string name="cd_delete">「%1$s」を削除</string>
+    <string name="cd_play">「%1$s」を再生</string>
+    <string name="empty_downloads_title">ダウンロード済みの番組はありません</string>
+    <string name="empty_downloads_body">「番組を探す」から保存すると、ここで聴けます。</string>
+
+    <!-- プレイヤー -->
+    <string name="player_loading_title">再生中...</string>
+    <string name="player_play">再生</string>
+    <string name="player_pause">一時停止</string>
+    <string name="player_expand">プレイヤーを開く</string>
+    <string name="player_collapse">プレイヤーを閉じる</string>
+    <string name="player_seek">再生位置</string>
+    <string name="player_position_description">%1$s / %2$s</string>
+    <string name="player_skip_back">%1$d秒戻る</string>
+    <string name="player_skip_forward">%1$d秒進む</string>
+    <string name="player_speed">再生速度</string>
+    <string name="player_speed_value">%1$sx</string>
+    <string name="player_turbo">ターボ</string>
+    <string name="player_turbo_value">%1$dx</string>
+    <string name="player_turbo_description">ターボ。長押しで%1$d倍速、タップで設定</string>
+    <string name="player_turbo_action">倍速を設定</string>
+
+    <!-- ダイアログ -->
+    <string name="dialog_close">閉じる</string>
+    <string name="dialog_cancel">キャンセル</string>
+    <string name="dialog_save">保存</string>
+    <string name="turbo_title">ターボ倍速設定</string>
+    <string name="turbo_body">長押し中の再生速度を設定します。\nCMスキップなどに便利です。</string>
+    <string name="turbo_presets">プリセット</string>
+    <string name="turbo_slider">ターボ倍速</string>
+    <string name="chunk_title">ダウンロード設定</string>
+    <string name="chunk_body">ダウンロード時の分割サイズを選択してください。</string>
+    <string name="chunk_safe">安全 (15秒)</string>
+    <string name="chunk_recommended">推奨 (60秒)</string>
+    <string name="chunk_fast">高速 (5分)</string>
+    <string name="chunk_all">一括 (試験的)</string>
+    <string name="area_title">エリア変更</string>
+    <string name="area_warning">IPアドレスが一致しないエリアの番組は再生できない場合があります</string>
 </resources>

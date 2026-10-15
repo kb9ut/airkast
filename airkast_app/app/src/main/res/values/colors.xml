@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="black">#FF0A0A0A</color>
-    <color name="white">#FFFFFFFF</color>
-    <color name="accent">#FF1DB954</color>
-    <color name="surface">#FF161616</color>
-    <color name="surface_elevated">#FF1E1E1E</color>
+    <!-- ウィンドウ背景(スプラッシュ/起動直後の下地)。Compose 側の surface と同値 -->
+    <color name="window_background">#FFFBF8FF</color>
+    <!-- ランチャーアイコン -->
+    <color name="ic_launcher_background">#FF3445A6</color>
 </resources>
