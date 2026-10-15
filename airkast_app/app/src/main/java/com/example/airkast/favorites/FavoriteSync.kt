@@ -2,6 +2,7 @@ package com.example.airkast.favorites
 
 import android.util.Log
 import com.example.airkast.AirkastProgram
+import com.example.airkast.isProgramDownloaded
 import kotlinx.coroutines.CancellationException
 import java.io.File
 import java.text.SimpleDateFormat
@@ -80,6 +81,8 @@ class FavoriteSync(
         val downloaded = mutableListOf<AirkastProgram>()
         val failed = mutableListOf<AirkastProgram>()
         for (program in candidates) {
+            // ダウンロードは順番に長時間かかるので、実行直前に手動ダウンロードや保存済みを再確認する
+            if (isDownloading(program) || isProgramDownloaded(downloadedFiles(), program)) continue
             try {
                 downloader.download(program) { onProgress(program, it) }
                 repository.clearFailure(program.episodeKey)

@@ -184,4 +184,47 @@ class FavoriteSyncTest {
         assertFailsWith<CancellationException> { runBlocking { sync(guides, downloader).run() } }
         assertTrue(repo.failures().isEmpty())
     }
+
+    private val first = prog(start = "20260123220000", end = "20260123230000")
+    private val second = prog(start = "20260124220000", end = "20260124230000")
+    private val twoDayGuides = FakeGuides { _, date ->
+        when (date) {
+            "20260123" -> listOf(first)
+            "20260124" -> listOf(second)
+            else -> emptyList()
+        }
+    }
+
+    @Test
+    fun skipsCandidateThatStartsDownloadingManuallyDuringSync() = runBlocking {
+        val busy = mutableSetOf<String>()
+        // 1 件目のダウンロード中に、もう 1 件が手動でダウンロード開始された状況
+        val downloader = FakeDownloader { program ->
+            busy += listOf(first, second).first { it != program }.id
+        }
+
+        val report = sync(twoDayGuides, downloader, isDownloading = { it.id in busy }).run()
+
+        assertEquals(1, downloader.downloaded.size)
+        assertEquals(downloader.downloaded, report.downloaded)
+        assertTrue(report.failed.isEmpty())
+        assertTrue(repo.failures().isEmpty())
+    }
+
+    @Test
+    fun skipsCandidateWhoseFileAppearedDuringSync() = runBlocking {
+        val files = mutableListOf<File>()
+        // 1 件目のダウンロード中に、もう 1 件のファイルが別経路で保存された状況
+        val downloader = FakeDownloader { program ->
+            val other = listOf(first, second).first { it != program }
+            files += File("TBS_アフター6_${other.startTime}_${other.endTime}.m4a")
+        }
+
+        val report = sync(twoDayGuides, downloader, downloaded = files).run()
+
+        assertEquals(1, downloader.downloaded.size)
+        assertEquals(downloader.downloaded, report.downloaded)
+        assertTrue(report.failed.isEmpty())
+        assertTrue(repo.failures().isEmpty())
+    }
 }
