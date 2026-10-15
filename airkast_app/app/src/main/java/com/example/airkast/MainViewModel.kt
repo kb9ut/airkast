@@ -657,8 +657,11 @@ internal fun HlsDownloadService.DownloadStatus.isActive(): Boolean =
  * ファイル名は `<stationId>_<title>_<start>_<end>.m4a` (HlsDownloadService.getDownloadFile 参照)。
  * 放送局違いで開始時刻が同じ番組を誤判定しないよう、放送局IDと開始・終了時刻の両方で照合する。
  */
-internal fun isProgramDownloaded(files: List<File>, program: AirkastProgram): Boolean {
+internal fun findDownloadedFile(files: List<File>, program: AirkastProgram): File? {
     val prefix = "${program.stationId.ifEmpty { "unknown" }}_"
     val suffix = "_${program.startTime}_${program.endTime}.m4a"
-    return files.any { it.name.startsWith(prefix) && it.name.endsWith(suffix) }
+    return files.firstOrNull { it.name.startsWith(prefix) && it.name.endsWith(suffix) }
 }
+
+internal fun isProgramDownloaded(files: List<File>, program: AirkastProgram): Boolean =
+    findDownloadedFile(files, program) != null
