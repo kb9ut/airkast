@@ -13,7 +13,9 @@ import androidx.core.app.NotificationCompat
 import com.example.airkast.AirkastApplication
 import com.example.airkast.AirkastClient
 import com.example.airkast.AirkastProgram
+import com.example.airkast.DownloadRegistry
 import com.example.airkast.DownloadRunner
+import com.example.airkast.favorites.episodeKey
 import com.example.airkast.getParcelableExtraCompat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -193,6 +195,14 @@ class HlsDownloadService : Service() {
             return
         }
 
+        // 自動ダウンロードや、中止処理の途中のジョブなど、他の処理が同じ回を書き込み中なら開始しない
+        if (!DownloadRegistry.tryClaim(program.episodeKey)) {
+            Log.d(TAG, "他の処理が書き込み中のためスキップ: ${program.id}")
+            // 動かすジョブが無いのにフォアグラウンドサービスだけ残らないようにする
+            if (downloadJobs.isEmpty()) stopSelf()
+            return
+        }
+
         // 状態をPendingに（Semaphore取得待ち）
         updateState(program.id, DownloadStatus.Pending(program))
         updateNotification()
@@ -227,6 +237,9 @@ class HlsDownloadService : Service() {
                 }
             }
         }
+        // 予約の解放はジョブの完了時に行う。ジョブが開始前にキャンセルされても必ず呼ばれ、
+        // 後始末(catch 内のファイル削除)が終わった後に解放される。
+        job.invokeOnCompletion { DownloadRegistry.release(program.episodeKey) }
         downloadJobs[program.id] = job
     }
 
