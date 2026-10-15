@@ -270,4 +270,21 @@ class MainViewModelBugfixTest {
         assertTrue(messages.any { it.contains("すでにダウンロード処理中") })
         collector.cancel()
     }
+
+    // ───────────── Worker のダウンロード完了後の再スキャン ─────────────
+
+    @Test
+    fun releasingAClaimRescansDownloadsSoWorkerFilesAppear() {
+        val key = "TBS:20260124220000"
+        assertTrue(DownloadRegistry.tryClaim(key))
+        val file = File(downloadsDir, "TBS_アフター6_20260124220000_20260124230000.m4a").apply { writeText("x") }
+
+        // 予約しただけでは再スキャンしない(まだ書き込み中かもしれない)
+        assertTrue(viewModel.downloadedFiles.value.isEmpty())
+
+        // Worker が書き終えて解放すると、キーが集合から外れた時点で再スキャンされる
+        DownloadRegistry.release(key)
+
+        assertEquals(listOf(file), viewModel.downloadedFiles.value)
+    }
 }

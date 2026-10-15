@@ -144,6 +144,16 @@ open class MainViewModel(
             }
         }
 
+        // 自動ダウンロード(Worker)は downloadStates を更新しないので、予約が解放されたとき
+        // (キーが集合から外れたとき)に保存先を再スキャンして、完了した回を再生可能にする
+        viewModelScope.launch {
+            var previous = DownloadRegistry.claimed.value
+            DownloadRegistry.claimed.collect { current ->
+                if (previous.any { it !in current }) scanForDownloads()
+                previous = current
+            }
+        }
+
         // Media3 MediaController を使用して接続
         connectToPlayerService()
 

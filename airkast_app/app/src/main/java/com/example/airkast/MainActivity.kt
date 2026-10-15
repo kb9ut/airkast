@@ -42,7 +42,11 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) openTabRequest = intent.getStringExtra(EXTRA_OPEN_TAB)
         // 起動しっぱなし/バックグラウンド復帰/日跨ぎで日付リストが古くならないよう、表示中は日付変化を監視する
         lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) { viewModel.watchDateChanges() }
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // 復帰時に保存先を再スキャンする(バックグラウンドの自動ダウンロードで増えたファイルを拾う)
+                viewModel.onScanForDownloads()
+                viewModel.watchDateChanges()
+            }
         }
         // アプリ復帰時にお気に入りの最新回を更新する
         lifecycleScope.launch {
