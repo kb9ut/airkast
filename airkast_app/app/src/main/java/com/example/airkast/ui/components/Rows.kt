@@ -19,7 +19,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -64,6 +66,8 @@ fun ProgramRow(
     downloadState: ProgramDownloadState,
     shape: Shape,
     onDownloadClick: () -> Unit,
+    isFavorite: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -120,7 +124,18 @@ fun ProgramRow(
                 }
             }
 
-            // 操作
+            // 操作(お気に入りの★は onToggleFavorite があるときだけ)
+            if (onToggleFavorite != null) {
+                IconButton(onClick = onToggleFavorite, modifier = Modifier.size(MinTouchTarget)) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                        contentDescription = stringResource(
+                            if (isFavorite) R.string.favorite_remove else R.string.favorite_add,
+                        ),
+                        tint = if (isFavorite) colors.primary else colors.onSurfaceVariant,
+                    )
+                }
+            }
             if (downloadable) {
                 DownloadButton(
                     state = downloadState,

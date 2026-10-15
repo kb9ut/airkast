@@ -3,6 +3,18 @@
     <string name="app_name">Airkast</string>
 
     <!-- ナビゲーション / トップバー -->
+    <string name="nav_favorites">お気に入り</string>
+    <string name="favorites_empty_title">お気に入りはまだありません</string>
+    <string name="favorites_empty_body">番組表の★で追加できます</string>
+    <string name="favorite_add">お気に入りに追加</string>
+    <string name="favorite_remove">お気に入りから外す</string>
+    <string name="favorite_auto_download">自動DL</string>
+    <string name="favorite_loading">読み込み中…</string>
+    <string name="favorite_no_recent">直近7日間に放送がありません</string>
+    <string name="favorite_load_error">番組表を取得できませんでした</string>
+    <string name="favorite_auto_running">自動取得中</string>
+    <string name="notification_denied">通知がオフです。自動ダウンロードは動きますが、完了は通知されません</string>
+    <string name="open_notification_settings">設定を開く</string>
     <string name="nav_find">番組を探す</string>
     <string name="nav_downloads">ダウンロード</string>
     <string name="menu_more">メニュー</string>
