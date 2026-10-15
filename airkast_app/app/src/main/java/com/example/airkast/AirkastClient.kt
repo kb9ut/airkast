@@ -17,7 +17,6 @@ import org.xmlpull.v1.XmlPullParserException
 import io.ktor.client.plugins.cookies.HttpCookies
 import io.ktor.client.plugins.cookies.AcceptAllCookiesStorage
 import io.ktor.client.plugins.UserAgent
-import io.ktor.client.plugins.plugin
 import java.io.IOException
 import java.util.UUID
 
@@ -27,63 +26,64 @@ import java.util.UUID
  * 認証、放送局情報、番組表の取得などを行います。
  */
 class AirkastClient {
+    companion object {
+        private const val TAG = "AirkastClient"
+        private const val AUTH1_URL = "https://radiko.jp/v2/api/auth1"
+        private const val AUTH2_URL = "https://radiko.jp/v2/api/auth2"
+
+        // Cookieの複製先 (ライブ用 / タイムフリー用)
+        private val SMART_STREAM_URLS = listOf(
+            "https://si-f-radiko.smartstream.ne.jp",
+            "https://tf-f-rpaa-radiko.smartstream.ne.jp",
+            "https://tf-rpaa.smartstream.ne.jp"
+        )
+
+        // PC版radikoの公開キー（JavaScriptから取得）
+        private const val PC_FULL_KEY = "bcd151073c03b352e1ef2fd66c32209da9ca0afa"
+
+        private const val USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        // PC版用のヘッダー
+        internal val defaultHeaders = mapOf(
+            "User-Agent" to USER_AGENT,
+            "X-Radiko-App" to "pc_html5",
+            "X-Radiko-App-Version" to "0.0.1",
+            "X-Radiko-User" to "dummy_user",
+            "X-Radiko-Device" to "pc"
+        )
+    }
+
     private val cookiesStorage = AcceptAllCookiesStorage()
     val client: HttpClient = HttpClient(Android) {
         install(HttpCookies) {
             storage = cookiesStorage
         }
         install(UserAgent) {
-            agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            agent = USER_AGENT
         }
     }
 
     var authToken: String? = null
     var areaId: String? = null
 
+    /**
+     * radiko.jp で取得したCookieをSmartStream（ライブ／タイムフリー配信）ドメインへ複製します。
+     * タイムフリーのHLS配信にはこのCookieが必要です。
+     */
     private suspend fun copyRadikoCookiesToSmartStream() {
-        val radikoUrl = Url("https://radiko.jp")
-        val cookies = cookiesStorage.get(radikoUrl)
+        val cookies = cookiesStorage.get(Url("https://radiko.jp"))
         if (cookies.isEmpty()) {
             Log.w(TAG, "Radiko cookies not found. Authentication might be incomplete.")
         } else {
-             Log.d(TAG, "Copying ${cookies.size} cookies from radiko.jp to smartstream.ne.jp")
+            Log.d(TAG, "Copying ${cookies.size} cookies from radiko.jp to smartstream.ne.jp")
         }
-        
+
         cookies.forEach { cookie ->
-             // SmartStreamのサブドメインに対してCookieを設定
-             // ライブ用
-             cookiesStorage.addCookie(
-                 Url("https://si-f-radiko.smartstream.ne.jp"),
-                 cookie.copy(domain = "smartstream.ne.jp")
-             )
-             // タイムフリー用 (これが不足していた可能性大)
-             cookiesStorage.addCookie(
-                 Url("https://tf-f-rpaa-radiko.smartstream.ne.jp"),
-                 cookie.copy(domain = "smartstream.ne.jp")
-             )
-             cookiesStorage.addCookie(
-                 Url("https://tf-rpaa.smartstream.ne.jp"),
-                 cookie.copy(domain = "smartstream.ne.jp")
-             )
+            SMART_STREAM_URLS.forEach { url ->
+                cookiesStorage.addCookie(Url(url), cookie.copy(domain = "smartstream.ne.jp"))
+            }
         }
-    }
-
-    companion object {
-        private const val TAG = "AirkastClient"
-        private const val AUTH1_URL = "https://radiko.jp/v2/api/auth1"
-        private const val AUTH2_URL = "https://radiko.jp/v2/api/auth2"
-        
-        // PC版radikoの公開キー（JavaScriptから取得）
-        private const val PC_FULL_KEY = "bcd151073c03b352e1ef2fd66c32209da9ca0afa"
-
-        // PC版用のヘッダー
-        internal val defaultHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "X-Radiko-App" to "pc_html5",
-            "X-Radiko-App-Version" to "0.0.1",
-            "X-Radiko-User" to "dummy_user",
-            "X-Radiko-Device" to "pc"
-        )
     }
 
     /**
@@ -96,7 +96,7 @@ class AirkastClient {
         Log.d(TAG, "URL: $AUTH1_URL")
         try {
             val response: HttpResponse = client.get(AUTH1_URL) {
-                defaultHeaders.forEach { (key, value) -> headers.append(key, value) }
+                applyDefaultHeaders()
             }
             Log.d(TAG, "auth1 レスポンス: ${response.status.value}")
             
@@ -167,7 +167,7 @@ class AirkastClient {
         
         try {
             val response: HttpResponse = client.get(AUTH2_URL) {
-                defaultHeaders.forEach { (key, value) -> headers.append(key, value) }
+                applyDefaultHeaders()
                 headers.append("X-Radiko-Authtoken", token)
                 headers.append("X-Radiko-Partialkey", partialKey)
             }
@@ -245,7 +245,7 @@ class AirkastClient {
     suspend fun getProgramGuide(stationId: String, date: String): List<AirkastProgram> = withContext(Dispatchers.IO) {
         try {
             val response: HttpResponse = client.get("https://radiko.jp/v3/program/station/date/$date/$stationId.xml") {
-                defaultHeaders.forEach { (key, value) -> headers.append(key, value) }
+                applyDefaultHeaders()
             }
             if (response.status.value != 200) {
                 throw ProgramGuideException(message = "HTTP Error: ${response.status.value}")
@@ -257,28 +257,28 @@ class AirkastClient {
         }
     }
 
+    /** タイムフリーの1回のダウンロードセッションを識別するlsid（ハイフンなしUUID）を生成します。 */
     fun generateNewLsid(): String {
         return UUID.randomUUID().toString().replace("-", "")
     }
 
     /**
-     * タイムフリーHLSストリームのURLを取得します。
+     * タイムフリーHLSストリームのURLを生成します。
      * @param program 対象の番組。
      * @param startAt 開始時間 (yyyyMMddHHmmss)。デフォルトはprogram.startTime。
      * @param endAt 終了時間 (yyyyMMddHHmmss)。デフォルトはprogram.endTime。
      * @param lsid セッションID。指定されない場合は新規生成されます。
      * @return HLSストリームのURL。
-     * @throws HlsStreamException HLSストリームURLの取得に失敗した場合。
      */
     fun generateHlsUrl(program: AirkastProgram, startAt: String? = null, endAt: String? = null, lsid: String? = null): String {
-        val finalLsid = lsid ?: UUID.randomUUID().toString().replace("-", "")
-        
+        val finalLsid = lsid ?: generateNewLsid()
+
         val ft = startAt ?: program.startTime
         val to = endAt ?: program.endTime
-        
+
         // Calculate duration in seconds
         val durationSeconds = try {
-            val format = java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.JAPAN)
+            val format = radikoTimestampFormat()
             val s = format.parse(ft)?.time ?: 0L
             val e = format.parse(to)?.time ?: 0L
             (e - s) / 1000
@@ -286,7 +286,6 @@ class AirkastClient {
             15 // Fallback
         }
 
-        // Correct hostname: tf-f-rpaa-radiko.smartstream.ne.jp
         return "https://tf-f-rpaa-radiko.smartstream.ne.jp/tf/playlist.m3u8" +
             "?station_id=${program.stationId}" +
             "&l=$durationSeconds" +
@@ -297,15 +296,15 @@ class AirkastClient {
             "&lsid=$finalLsid" +
             "&type=b"
     }
-    
-    // resolveRedirects is no longer needed as we are using the direct URL.
-    
-    suspend fun getHlsStreamUrl(program: AirkastProgram): String = withContext(Dispatchers.IO) {
-        val token = authToken ?: throw HlsStreamException("Auth token is not available. Run auth1 first.")
-        
-        // Return the correctly formatted URL directly.
-        // Authentication headers (X-Radiko-Authtoken) will be added by the caller (HlsDownloader, PlayerService).
-        generateHlsUrl(program)
+
+    /**
+     * 番組のストリーミング再生用HLS URLを返します。
+     * 認証ヘッダー (X-Radiko-Authtoken) は呼び出し側 (PlayerService) が付与します。
+     * @throws HlsStreamException 認証トークンがない場合。
+     */
+    suspend fun getHlsStreamUrl(program: AirkastProgram): String {
+        if (authToken == null) throw HlsStreamException("Auth token is not available. Run auth1 first.")
+        return generateHlsUrl(program)
     }
 
     @Throws(XmlParseException::class)
@@ -347,52 +346,53 @@ class AirkastClient {
         }
     }
 
-        @Throws(XmlParseException::class)
-        private fun parseProgramGuideXml(xmlString: String, stationId: String): List<AirkastProgram> {
-            try {
-                val programs = mutableListOf<AirkastProgram>()
-                val parser = Xml.newPullParser()
-                parser.setInput(xmlString.reader())
-                var eventType = parser.eventType
-                var currentProgram: AirkastProgram? = null
-                var text: String? = null
+    @Throws(XmlParseException::class)
+    private fun parseProgramGuideXml(xmlString: String, stationId: String): List<AirkastProgram> {
+        try {
+            val programs = mutableListOf<AirkastProgram>()
+            val parser = Xml.newPullParser()
+            parser.setInput(xmlString.reader())
+            var eventType = parser.eventType
+            var currentProgram: AirkastProgram? = null
+            var text: String? = null
 
-                while (eventType != XmlPullParser.END_DOCUMENT) {
-                    val tagName = parser.name
-                    when (eventType) {
-                        XmlPullParser.START_TAG -> {
-                            if (tagName.equals("prog", ignoreCase = true)) {
-                                val id = parser.getAttributeValue(null, "id") ?: throw XmlParseException("Missing 'id' attribute in program XML")
-                                val ft = parser.getAttributeValue(null, "ft") ?: throw XmlParseException("Missing 'ft' attribute in program XML")
-                                val to = parser.getAttributeValue(null, "to") ?: throw XmlParseException("Missing 'to' attribute in program XML")
-                                currentProgram = AirkastProgram(id, stationId, ft, to, "", "", "", null)
-                            }
+            while (eventType != XmlPullParser.END_DOCUMENT) {
+                val tagName = parser.name
+                when (eventType) {
+                    XmlPullParser.START_TAG -> {
+                        if (tagName.equals("prog", ignoreCase = true)) {
+                            val id = parser.getAttributeValue(null, "id") ?: throw XmlParseException("Missing 'id' attribute in program XML")
+                            val ft = parser.getAttributeValue(null, "ft") ?: throw XmlParseException("Missing 'ft' attribute in program XML")
+                            val to = parser.getAttributeValue(null, "to") ?: throw XmlParseException("Missing 'to' attribute in program XML")
+                            currentProgram = AirkastProgram(id, stationId, ft, to, "", "", "", null)
                         }
-                        XmlPullParser.TEXT -> text = parser.text
-                        XmlPullParser.END_TAG -> {
-                            currentProgram?.let { prog ->
-                                when (tagName) {
-                                    "title" -> prog.title = text ?: ""
-                                    "desc" -> prog.description = text ?: ""
-                                    "pfm" -> prog.performer = text ?: ""
-                                    "img" -> prog.imageUrl = text
-                                    "prog" -> {
-                                        programs.add(prog)
-                                        currentProgram = null
-                                    }
+                    }
+                    XmlPullParser.TEXT -> text = parser.text
+                    XmlPullParser.END_TAG -> {
+                        currentProgram?.let { prog ->
+                            when (tagName) {
+                                "title" -> prog.title = text ?: ""
+                                "desc" -> prog.description = text ?: ""
+                                "pfm" -> prog.performer = text ?: ""
+                                "img" -> prog.imageUrl = text
+                                "prog" -> {
+                                    programs.add(prog)
+                                    currentProgram = null
                                 }
                             }
                         }
                     }
-                    eventType = parser.next()
                 }
-                return programs
-            } catch (e: XmlPullParserException) {
-                throw XmlParseException(cause = e)
-            } catch (e: IOException) {
-                throw XmlParseException(cause = e)
+                eventType = parser.next()
             }
-        }}
+            return programs
+        } catch (e: XmlPullParserException) {
+            throw XmlParseException(cause = e)
+        } catch (e: IOException) {
+            throw XmlParseException(cause = e)
+        }
+    }
+}
 
 fun HttpRequestBuilder.applyDefaultHeaders() {
     AirkastClient.defaultHeaders.forEach { (key, value) -> headers.append(key, value) }

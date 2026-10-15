@@ -6,6 +6,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** radikoが番組の開始・終了時刻に使うタイムスタンプ形式 (YYYYMMDDHHmmss)。 */
+internal const val RADIKO_TIMESTAMP_PATTERN = "yyyyMMddHHmmss"
+
+/** radikoのタイムスタンプ用の [SimpleDateFormat] を生成します（スレッドセーフでないため都度生成）。 */
+internal fun radikoTimestampFormat(): SimpleDateFormat =
+    SimpleDateFormat(RADIKO_TIMESTAMP_PATTERN, Locale.JAPAN)
+
 @Parcelize
 data class AirkastProgram(
     val id: String,
@@ -20,49 +27,46 @@ data class AirkastProgram(
 
     val formattedDisplayTime: String
         get() {
-            val inputFormat = SimpleDateFormat("yyyyMMddHHmmss", Locale.JAPAN)
             val outputFormat = SimpleDateFormat("HH:mm", Locale.JAPAN)
-            try {
+            return try {
+                val inputFormat = radikoTimestampFormat()
                 val start = inputFormat.parse(startTime)
                 val end = inputFormat.parse(endTime)
-                return "${outputFormat.format(start!!)} - ${outputFormat.format(end!!)}"
+                "${outputFormat.format(start!!)} - ${outputFormat.format(end!!)}"
             } catch (e: Exception) {
-                return "Time N/A"
+                "Time N/A"
             }
         }
 
     val formattedDisplayDate: String
         get() {
-            val inputFormat = SimpleDateFormat("yyyyMMddHHmmss", Locale.JAPAN)
-            val outputFormat = SimpleDateFormat("MM/dd", Locale.JAPAN)
-            try {
-                val start = inputFormat.parse(startTime)
-                return outputFormat.format(start!!)
+            return try {
+                val start = radikoTimestampFormat().parse(startTime)
+                SimpleDateFormat("MM/dd", Locale.JAPAN).format(start!!)
             } catch (e: Exception) {
-                return ""
+                ""
             }
         }
 
     val isDownloadable: Boolean
         get() {
-            try {
-                val inputFormat = SimpleDateFormat("yyyyMMddHHmmss", Locale.JAPAN)
-                val endDate = inputFormat.parse(endTime)
-                return endDate?.before(Date()) ?: false
+            return try {
+                val endDate = radikoTimestampFormat().parse(endTime)
+                endDate?.before(Date()) ?: false
             } catch (e: Exception) {
-                return false
+                false
             }
         }
 
     val durationMs: Long
         get() {
-            val inputFormat = SimpleDateFormat("yyyyMMddHHmmss", Locale.JAPAN)
-            try {
+            return try {
+                val inputFormat = radikoTimestampFormat()
                 val start = inputFormat.parse(startTime)
                 val end = inputFormat.parse(endTime)
-                return (end?.time ?: 0) - (start?.time ?: 0)
+                (end?.time ?: 0) - (start?.time ?: 0)
             } catch (e: Exception) {
-                return 0L
+                0L
             }
         }
 }

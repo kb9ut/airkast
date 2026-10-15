@@ -12,13 +12,16 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.airkast.AirkastApplication
 import com.example.airkast.AirkastClient
-import com.example.airkast.HlsDownloader
 import com.example.airkast.AirkastProgram
+import com.example.airkast.HlsDownloader
+import com.example.airkast.getParcelableExtraCompat
+import com.example.airkast.radikoTimestampFormat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Semaphore
 import java.io.File
+import java.util.Date
 
 private const val TAG = "HlsDownloadService"
 
@@ -44,6 +47,9 @@ class HlsDownloadService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "HlsDownloadServiceChannel"
         private const val MAX_CONCURRENT_DOWNLOADS = 3
+        private const val DEFAULT_CHUNK_SIZE_SECONDS = 60
+        private const val MAX_TRACKED_STATES = 50
+        private const val KEPT_FINISHED_STATES = 20
 
         // ダウンロード状態の管理 (Static access for ViewModel)
         private val _downloadStates = MutableStateFlow<Map<String, DownloadStatus>>(emptyMap())
@@ -97,14 +103,6 @@ class HlsDownloadService : Service() {
 
             return null
         }
-
-        fun parseTimesFromFileName(fileName: String): Pair<String, String>? {
-            val parsed = parseFileName(fileName)
-            if (parsed != null && parsed.startTime.isNotEmpty() && parsed.endTime.isNotEmpty()) {
-                return Pair(parsed.startTime, parsed.endTime)
-            }
-            return null
-        }
     }
 
     sealed class DownloadStatus(open val program: AirkastProgram) {
@@ -115,6 +113,9 @@ class HlsDownloadService : Service() {
         data class Error(override val program: AirkastProgram, val message: String) : DownloadStatus(program)
         data class Canceled(override val program: AirkastProgram) : DownloadStatus(program)
     }
+
+    private fun DownloadStatus.isFinished(): Boolean =
+        this is DownloadStatus.Completed || this is DownloadStatus.Error || this is DownloadStatus.Canceled
 
     override fun onCreate() {
         super.onCreate()
@@ -128,13 +129,8 @@ class HlsDownloadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_DOWNLOAD -> {
-                val program = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(EXTRA_PROGRAM, AirkastProgram::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(EXTRA_PROGRAM)
-                }
-                val chunkSize = intent.getIntExtra(EXTRA_CHUNK_SIZE, 60)
+                val program = intent.getParcelableExtraCompat<AirkastProgram>(EXTRA_PROGRAM)
+                val chunkSize = intent.getIntExtra(EXTRA_CHUNK_SIZE, DEFAULT_CHUNK_SIZE_SECONDS)
                 program?.let { startDownload(it, chunkSize) }
             }
             ACTION_CANCEL_DOWNLOAD -> {
@@ -170,45 +166,7 @@ class HlsDownloadService : Service() {
                 semaphoreAcquired = true
                 Log.d(TAG, "Semaphore acquired, starting: ${program.title}")
 
-                // ダウンロード開始
-                updateState(program.id, DownloadStatus.InProgress(program, 0))
-                updateNotification()
-
-                val hlsDownloader = HlsDownloader(client.client)
-
-                val format = java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.JAPAN)
-                val startTime = format.parse(program.startTime)?.time ?: 0L
-                val endTime = format.parse(program.endTime)?.time ?: 0L
-
-                if (startTime == 0L || endTime == 0L || startTime >= endTime) {
-                    throw Exception("Invalid program duration: start=$startTime, end=$endTime")
-                }
-
-                val downloadLsid = client.generateNewLsid()
-
-                hlsDownloader.downloadChunked(
-                    outputFile = outputFile,
-                    startTime = startTime,
-                    endTime = endTime,
-                    chunkDurationSeconds = chunkSizeSeconds,
-                    authToken = client.authToken ?: "",
-                    urlGenerator = { s, e ->
-                        val sStr = format.format(java.util.Date(s))
-                        val eStr = format.format(java.util.Date(e))
-                        client.generateHlsUrl(program, sStr, eStr, downloadLsid)
-                    },
-                    onProgress = { floatProgress ->
-                        val intProgress = (floatProgress * 100).toInt()
-                        updateState(program.id, DownloadStatus.InProgress(program, intProgress))
-                        updateNotification()
-                    },
-                    onMuxingProgress = { floatProgress ->
-                        val intProgress = (floatProgress * 100).toInt()
-                        updateState(program.id, DownloadStatus.Muxing(program, intProgress))
-                        updateNotification()
-                    }
-                )
-
+                runDownload(program, chunkSizeSeconds, outputFile)
                 updateState(program.id, DownloadStatus.Completed(program, outputFile))
             } catch (e: CancellationException) {
                 if (outputFile.exists()) outputFile.delete()
@@ -231,13 +189,56 @@ class HlsDownloadService : Service() {
         downloadJobs[program.id] = job
     }
 
+    /**
+     * 番組を [outputFile] にダウンロードします。進捗は状態フローと通知に反映されます。
+     */
+    private suspend fun runDownload(program: AirkastProgram, chunkSizeSeconds: Int, outputFile: File) {
+        updateState(program.id, DownloadStatus.InProgress(program, 0))
+        updateNotification()
+
+        val format = radikoTimestampFormat()
+        val startTime = format.parse(program.startTime)?.time ?: 0L
+        val endTime = format.parse(program.endTime)?.time ?: 0L
+
+        if (startTime == 0L || endTime == 0L || startTime >= endTime) {
+            throw Exception("Invalid program duration: start=$startTime, end=$endTime")
+        }
+
+        val downloadLsid = client.generateNewLsid()
+
+        HlsDownloader(client.client).downloadChunked(
+            outputFile = outputFile,
+            startTime = startTime,
+            endTime = endTime,
+            chunkDurationSeconds = chunkSizeSeconds,
+            authToken = client.authToken ?: "",
+            urlGenerator = { s, e ->
+                client.generateHlsUrl(program, format.format(Date(s)), format.format(Date(e)), downloadLsid)
+            },
+            onProgress = { floatProgress ->
+                updateState(program.id, DownloadStatus.InProgress(program, (floatProgress * 100).toInt()))
+                updateNotification()
+            },
+            onMuxingProgress = { floatProgress ->
+                updateState(program.id, DownloadStatus.Muxing(program, (floatProgress * 100).toInt()))
+                updateNotification()
+            }
+        )
+    }
+
     private fun cancelDownload(programId: String) {
         downloadJobs[programId]?.cancel()
         downloadJobs.remove(programId)
         val currentState = _downloadStates.value[programId]
         val program = currentState?.program ?: AirkastProgram(
-            "unknown", "Unknown", "Unknown",
-            "20000101000000", "20000101010000", "", "", ""
+            id = programId,
+            stationId = "Unknown",
+            startTime = "20000101000000",
+            endTime = "20000101010000",
+            title = "Unknown",
+            description = "",
+            performer = "",
+            imageUrl = null
         )
 
         updateState(programId, DownloadStatus.Canceled(program))
@@ -262,24 +263,21 @@ class HlsDownloadService : Service() {
         currentMap[programId] = status
 
         // Prune if map exceeds threshold
-        if (currentMap.size > 50) {
-            val finishedStates = currentMap.filterValues {
-                it is DownloadStatus.Completed || it is DownloadStatus.Error || it is DownloadStatus.Canceled
-            }.keys.toList()
-            if (finishedStates.size > 20) {
-                finishedStates.take(finishedStates.size - 20).forEach { currentMap.remove(it) }
+        if (currentMap.size > MAX_TRACKED_STATES) {
+            val finishedStates = currentMap.filterValues { it.isFinished() }.keys.toList()
+            if (finishedStates.size > KEPT_FINISHED_STATES) {
+                finishedStates.take(finishedStates.size - KEPT_FINISHED_STATES).forEach { currentMap.remove(it) }
             }
         }
 
         _downloadStates.value = currentMap
     }
 
+    /** サービス起動時、実行中のダウンロードがなければ完了済みの状態を破棄します。 */
     private fun pruneDownloadStates() {
         if (downloadJobs.isEmpty()) {
             val currentMap = _downloadStates.value.toMutableMap()
-            val finishedKeys = currentMap.filterValues {
-                it is DownloadStatus.Completed || it is DownloadStatus.Error || it is DownloadStatus.Canceled
-            }.keys
+            val finishedKeys = currentMap.filterValues { it.isFinished() }.keys
             if (finishedKeys.isNotEmpty()) {
                 finishedKeys.forEach { currentMap.remove(it) }
                 _downloadStates.value = currentMap

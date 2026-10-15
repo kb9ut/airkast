@@ -4,27 +4,29 @@ import android.app.Application
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.example.airkast.service.HlsDownloadService
+import com.example.airkast.service.PlayerCommands
 import com.example.airkast.service.PlayerService
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.onCompletion
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -104,10 +106,10 @@ open class MainViewModel(
     private val _playbackSpeed = MutableStateFlow(1.0f)
     val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
 
-    private val _mediaMetadata = MutableStateFlow<androidx.media3.common.MediaMetadata?>(null)
-    val mediaMetadata: StateFlow<androidx.media3.common.MediaMetadata?> = _mediaMetadata.asStateFlow()
+    private val _mediaMetadata = MutableStateFlow<MediaMetadata?>(null)
+    val mediaMetadata: StateFlow<MediaMetadata?> = _mediaMetadata.asStateFlow()
 
-    private var positionPollingJob: kotlinx.coroutines.Job? = null
+    private var positionPollingJob: Job? = null
 
     // --- Turbo (長押し高速再生) ---
     private val _turboSpeed = MutableStateFlow(50f) // デフォルト50倍速
@@ -128,6 +130,11 @@ open class MainViewModel(
         private const val KEY_LAST_TIME_FILTER = "last_time_filter"
         private const val KEY_TURBO_SPEED = "turbo_speed"
         private const val KEY_DOWNLOAD_CHUNK_SIZE = "download_chunk_size"
+
+        // PlayerServiceからのduration取得リトライ設定
+        private const val DURATION_MAX_RETRIES = 15
+        private const val DURATION_RETRY_DELAY_MS = 300L
+        private const val MAX_VALID_DURATION_MS = 360_000_000L // 100時間
     }
 
     init {
@@ -239,11 +246,11 @@ open class MainViewModel(
             }
         }
 
-        override fun onMediaMetadataChanged(metadata: androidx.media3.common.MediaMetadata) {
+        override fun onMediaMetadataChanged(metadata: MediaMetadata) {
             _mediaMetadata.value = metadata
         }
 
-        override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+        override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
             _playbackSpeed.value = playbackParameters.speed
         }
     }
@@ -253,52 +260,44 @@ open class MainViewModel(
      * MediaController.durationはTIME_UNSETを返すことがあるため、
      * カスタムコマンドでPlayerServiceから直接ExoPlayerのdurationを取得します。
      */
-    private var durationRetryJob: kotlinx.coroutines.Job? = null
+    private var durationRetryJob: Job? = null
     
     private fun updateDurationFromPlayer() {
         durationRetryJob?.cancel()
         durationRetryJob = viewModelScope.launch {
-            fetchDurationFromService(retryCount = 0)
+            fetchDurationFromService()
         }
     }
-    
-    private suspend fun fetchDurationFromService(retryCount: Int) {
-        if (retryCount >= 15) {
-            Log.w(TAG, "Failed to get valid duration after 15 retries")
-            return
-        }
-        
-        val controller = mediaController
-        if (controller == null || !controller.isConnected) {
-            Log.d(TAG, "fetchDurationFromService: controller not connected, retry in 300ms")
-            kotlinx.coroutines.delay(300)
-            fetchDurationFromService(retryCount + 1)
-            return
-        }
-        
-        try {
-            val command = SessionCommand("custom_command_get_duration", Bundle.EMPTY)
-            val result = controller.sendCustomCommand(command, Bundle.EMPTY).get()
-            val duration = result.extras.getLong("duration_ms", 0L)
-            
-            Log.d(TAG, "fetchDurationFromService: retry=$retryCount, duration=$duration")
-            
-            // C.TIME_UNSET = Long.MIN_VALUE + 1 = -9223372036854775807
-            // また0や負の値も無効として扱う
-            if (duration > 0 && duration < 360000000L) {
-                _playbackDuration.value = duration
-                _playbackSpeed.value = controller.playbackParameters?.speed ?: 1.0f
-                Log.d(TAG, "Player READY: duration=$duration ms")
+
+    private suspend fun fetchDurationFromService() {
+        for (retryCount in 0 until DURATION_MAX_RETRIES) {
+            val controller = mediaController
+            if (controller == null || !controller.isConnected) {
+                Log.d(TAG, "fetchDurationFromService: controller not connected, retry in ${DURATION_RETRY_DELAY_MS}ms")
             } else {
-                // durationがまだ取得できていない場合、少し待ってから再試行
-                kotlinx.coroutines.delay(300)
-                fetchDurationFromService(retryCount + 1)
+                try {
+                    val command = SessionCommand(PlayerCommands.GET_DURATION, Bundle.EMPTY)
+                    val result = controller.sendCustomCommand(command, Bundle.EMPTY).get()
+                    val duration = result.extras.getLong(PlayerCommands.KEY_DURATION_MS, 0L)
+
+                    Log.d(TAG, "fetchDurationFromService: retry=$retryCount, duration=$duration")
+
+                    // C.TIME_UNSET = Long.MIN_VALUE + 1 = -9223372036854775807
+                    // また0や負の値も無効として扱う
+                    if (duration > 0 && duration < MAX_VALID_DURATION_MS) {
+                        _playbackDuration.value = duration
+                        _playbackSpeed.value = controller.playbackParameters.speed
+                        Log.d(TAG, "Player READY: duration=$duration ms")
+                        return
+                    }
+                    // durationがまだ取得できていない場合、少し待ってから再試行
+                } catch (e: Exception) {
+                    Log.e(TAG, "fetchDurationFromService error: ${e.message}")
+                }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "fetchDurationFromService error: ${e.message}")
-            kotlinx.coroutines.delay(300)
-            fetchDurationFromService(retryCount + 1)
+            delay(DURATION_RETRY_DELAY_MS)
         }
+        Log.w(TAG, "Failed to get valid duration after $DURATION_MAX_RETRIES retries")
     }
 
     private fun checkPollingState() {
@@ -314,7 +313,7 @@ open class MainViewModel(
         positionPollingJob = viewModelScope.launch {
             while (true) {
                 _playbackPosition.value = mediaController?.currentPosition ?: 0L
-                kotlinx.coroutines.delay(500)
+                delay(500)
             }
         }
     }
@@ -339,13 +338,13 @@ open class MainViewModel(
         val controller = mediaController
         if (controller != null && controller.isConnected) {
             val extras = Bundle().apply {
-                putString("file_path", file.absolutePath)
-                putParcelable("program", program)
+                putString(PlayerCommands.KEY_FILE_PATH, file.absolutePath)
+                putParcelable(PlayerCommands.KEY_PROGRAM, program)
             }
-            val command = SessionCommand("custom_command_play_from_file", Bundle.EMPTY)
+            val command = SessionCommand(PlayerCommands.PLAY_FROM_FILE, Bundle.EMPTY)
             controller.sendCustomCommand(command, extras)
             // 初期状態を更新
-            _mediaMetadata.value = androidx.media3.common.MediaMetadata.Builder()
+            _mediaMetadata.value = MediaMetadata.Builder()
                 .setTitle(program.title)
                 .setArtist(program.performer)
                 .build()
@@ -382,7 +381,7 @@ open class MainViewModel(
     fun startTurbo() {
         val controller = mediaController ?: return
         if (_isTurboActive.value) return
-        preTurboSpeed = controller.playbackParameters?.speed ?: 1.0f
+        preTurboSpeed = controller.playbackParameters.speed
         _isTurboActive.value = true
         controller.setPlaybackSpeed(_turboSpeed.value)
         Log.d(TAG, "Turbo START: ${_turboSpeed.value}x (was ${preTurboSpeed}x)")
@@ -447,19 +446,19 @@ open class MainViewModel(
                          _userMessage.emit("認証トークンがありません。再認証してください。")
                          return@launch
                     }
-                    // リダイレクト解決済みのURLを取得する
+                    // タイムフリーHLSのURLを生成する
                     val streamUrl = client.getHlsStreamUrl(program)
                     Log.d(TAG, "Stream URL obtained: ${streamUrl.take(80)}...")
                     
                     val extras = Bundle().apply {
-                        putString("url", streamUrl)
-                        putString("auth_token", authToken)
-                        putParcelable("program", program)
+                        putString(PlayerCommands.KEY_URL, streamUrl)
+                        putString(PlayerCommands.KEY_AUTH_TOKEN, authToken)
+                        putParcelable(PlayerCommands.KEY_PROGRAM, program)
                     }
-                    val command = SessionCommand("custom_command_play_stream", Bundle.EMPTY)
+                    val command = SessionCommand(PlayerCommands.PLAY_STREAM, Bundle.EMPTY)
                     controller.sendCustomCommand(command, extras)
                     // 初期状態を更新してIn-App Playerに表示
-                    _mediaMetadata.value = androidx.media3.common.MediaMetadata.Builder()
+                    _mediaMetadata.value = MediaMetadata.Builder()
                         .setTitle(program.title)
                         .setArtist("${program.stationId} | ${program.formattedDisplayDate} | ${program.formattedDisplayTime}")
                         .build()
