@@ -316,4 +316,33 @@ class FavoriteSyncTest {
         assertEquals(listOf(prog().id), released)
         assertTrue(repo.failures().isEmpty())
     }
+
+    @Test
+    fun skipsRemainingEpisodesWhenAutoDownloadIsTurnedOffDuringSync() = runBlocking {
+        // 1 件目のダウンロード中に、ユーザーが自動DL を OFF にした
+        val downloader = FakeDownloader { repo.setAutoDownload("TBS", "アフター6", false) }
+        val claimed = mutableListOf<String>()
+
+        val report = sync(twoDayGuides, downloader, claim = { claimed += it.id; true }).run()
+
+        // 実行中の 1 件目は完走し、2 件目は予約も失敗の記録もせずにスキップする
+        assertEquals(listOf(first), downloader.downloaded)
+        assertEquals(listOf(first.id), claimed)
+        assertEquals(listOf(first), report.downloaded)
+        assertTrue(report.failed.isEmpty())
+        assertTrue(repo.failures().isEmpty())
+    }
+
+    @Test
+    fun skipsRemainingEpisodesWhenTheFavoriteIsRemovedDuringSync() = runBlocking {
+        val downloader = FakeDownloader { repo.remove("TBS", "アフター6") }
+        val claimed = mutableListOf<String>()
+
+        val report = sync(twoDayGuides, downloader, claim = { claimed += it.id; true }).run()
+
+        assertEquals(listOf(first), downloader.downloaded)
+        assertEquals(listOf(first.id), claimed)
+        assertTrue(report.failed.isEmpty())
+        assertTrue(repo.failures().isEmpty())
+    }
 }

@@ -1,5 +1,6 @@
 package com.example.airkast.favorites
 
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -32,5 +33,21 @@ class FavoriteSyncSchedulerTest {
         val request = FavoriteSyncScheduler.buildOneTimeRequest()
 
         assertEquals(FavoriteSyncWorker::class.java.name, request.workSpec.workerClassName)
+    }
+
+    @Test
+    fun syncNowAppendsSoStarsAddedDuringARunAreNotDropped() {
+        assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, FavoriteSyncScheduler.SYNC_NOW_POLICY)
+    }
+
+    @Test
+    fun periodicRequestDelaysItsFirstRunByOneInterval() {
+        val request = FavoriteSyncScheduler.buildPeriodicRequest()
+
+        assertEquals(FavoriteSyncWorker::class.java.name, request.workSpec.workerClassName)
+        assertEquals(
+            java.util.concurrent.TimeUnit.HOURS.toMillis(FavoriteSyncScheduler.INTERVAL_HOURS),
+            request.workSpec.initialDelay,
+        )
     }
 }

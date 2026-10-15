@@ -83,6 +83,9 @@ class FavoriteSync(
         val downloaded = mutableListOf<AirkastProgram>()
         val failed = mutableListOf<AirkastProgram>()
         for (program in candidates) {
+            // 実行中に自動DL が OFF にされた/お気に入りが外された場合は、残りの回を予約も失敗の記録もせずにスキップする
+            // (すでにダウンロード中の回は完走させる)
+            if (!stillAutoDownloads(program)) continue
             // 手動ダウンロードなど他の処理が書き込み中なら、その回は次の周期に回す(失敗には数えない)
             if (!claim(program)) continue
             try {
@@ -106,5 +109,11 @@ class FavoriteSync(
             }
         }
         return SyncReport(downloaded, failed, stations.size, stationsFailed)
+    }
+
+    /** [program] に一致する、自動DL が ON のお気に入りが現時点でもあるか(実行開始時のコピーではなく最新を読む)。 */
+    private fun stillAutoDownloads(program: AirkastProgram): Boolean {
+        val key = normalizeProgramTitle(program.title)
+        return repository.favorites().any { it.autoDownload && it.stationId == program.stationId && it.key == key }
     }
 }
