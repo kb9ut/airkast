@@ -2,6 +2,7 @@ package com.example.airkast
 
 import android.app.Application
 import android.content.SharedPreferences
+import com.example.airkast.favorites.episodeKey
 import com.example.airkast.service.HlsDownloadService
 import com.example.airkast.service.HlsDownloadService.DownloadStatus
 import io.mockk.coEvery
@@ -9,9 +10,12 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.unmockkAll
+import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -43,6 +47,7 @@ class MainViewModelBugfixTest {
     private lateinit var downloadsDir: File
     private lateinit var client: AirkastClient
     private lateinit var viewModel: MainViewModel
+    private lateinit var app: AirkastApplication
 
     private val dayFmt = SimpleDateFormat("yyyyMMdd", Locale.JAPAN)
     private val timeFmt = SimpleDateFormat("yyyyMMddHHmmss", Locale.JAPAN)
@@ -63,7 +68,7 @@ class MainViewModelBugfixTest {
         every { prefs.getFloat(any(), any()) } answers { secondArg() }
         every { prefs.getInt(any(), any()) } answers { secondArg() }
 
-        val app = mockk<AirkastApplication>(relaxed = true)
+        app = mockk(relaxed = true)
         every { app.airkastClient } returns client
         every { app.getSharedPreferences(any(), any()) } returns prefs
         every { app.getExternalFilesDir("downloads") } returns downloadsDir
@@ -78,6 +83,7 @@ class MainViewModelBugfixTest {
     @After
     fun tearDown() {
         setDownloadStates(emptyMap())
+        DownloadRegistry.clearForTest()
         unmockkAll()
         Dispatchers.resetMain()
     }
@@ -243,5 +249,25 @@ class MainViewModelBugfixTest {
     fun isProgramDownloaded_differentTime_isNotDownloaded() {
         val files = listOf(File("TBS_title_20260101090000_20260101100000.m4a"))
         assertFalse(isProgramDownloaded(files, program(start = "20260101100000", end = "20260101110000")))
+    }
+
+    // ───────────── 手動ダウンロードの予約ガード ─────────────
+
+    @Test
+    fun onDownloadProgram_doesNothingWhenTheEpisodeIsClaimedByAnotherWriter() {
+        val program = AirkastProgram(
+            "p1", "TBS", "20260124220000", "20260124230000", "アフター6", "", "", null
+        )
+        DownloadRegistry.tryClaim(program.episodeKey)
+        val messages = mutableListOf<String>()
+        val collector = kotlinx.coroutines.CoroutineScope(Dispatchers.Unconfined).launch {
+            viewModel.userMessage.collect { messages += it }
+        }
+
+        viewModel.onDownloadProgram(program, 60)
+
+        verify(exactly = 0) { app.startService(any()) }
+        assertTrue(messages.any { it.contains("すでにダウンロード処理中") })
+        collector.cancel()
     }
 }

@@ -14,6 +14,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
+import com.example.airkast.favorites.episodeKey
 import com.example.airkast.service.HlsDownloadService
 import com.example.airkast.service.PlayerCommands
 import com.example.airkast.service.PlayerService
@@ -581,6 +582,11 @@ open class MainViewModel(
      * @param chunkSizeSeconds 分割ダウンロードのチャンクサイズ（秒）。
      */
     fun onDownloadProgram(program: AirkastProgram, chunkSizeSeconds: Int) {
+        // 自動ダウンロードや中止処理の途中など、他の処理が同じ回を書き込み中ならサービスを起動しない
+        if (DownloadRegistry.isClaimed(program.episodeKey)) {
+            viewModelScope.launch { _userMessage.emit("この回はすでにダウンロード処理中です: ${program.title}") }
+            return
+        }
         val intent = Intent(getApplication(), HlsDownloadService::class.java).apply {
             action = HlsDownloadService.ACTION_START_DOWNLOAD
             putExtra(HlsDownloadService.EXTRA_PROGRAM, program)
