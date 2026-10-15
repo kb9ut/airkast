@@ -15,7 +15,7 @@ AIエージェントと開発者の共通の指示書・仕様書は、このフ
 ```bash
 cd airkast_app
 ./gradlew assembleDebug        # デバッグAPK
-./gradlew testDebugUnitTest    # 単体テスト (JUnit4 / Ktor MockEngine / MockK)
+./gradlew testDebugUnitTest    # 単体テスト (JUnit4 / Ktor MockEngine / MockK / Robolectric)
 ```
 
 - **JDK 17** (`airkast_app/.tool-versions`)。Android Studio 同梱の JBR (JDK 21) でも可。**既定の JDK 24 では Gradle 8.11.1 が動かない**。
@@ -97,16 +97,13 @@ Headers: X-Radiko-Authtoken: {token}
 - `MainViewModel` の `dateList` / `ongoingDownloadStates` / `downloadedFiles` / `skipBackward` / `skipForward` / `setPlaybackSpeed` / `userMessage` は UI が依存している。名前を変えるとビルドが壊れる。
 - お気に入り番組の自動ダウンロードは `favorites/` パッケージ。呼び出しは `AirkastApplication.onCreate` → `FavoriteSyncScheduler` → `FavoriteSyncWorker` → `FavoriteSync` → `FavoriteMatcher` / `FavoriteRepository` → `DownloadRunner`。設計と計画は `docs/superpowers/specs/` と `docs/superpowers/plans/`。
 - この機能は UI が無いため、お気に入りを追加できず休眠状態。UI の計画では必ず次を行う: (1) ★や自動DLの切り替えのたびに `FavoriteSyncScheduler.update` を呼ぶ、(2) 手動ダウンロードと Worker が同じ `getDownloadFile` のパスへ書かないよう、プロセス全体のダウンロード中レジストリを作る(現状 Worker は `HlsDownloadService.downloadStates` を読むだけ)、(3) Android 13 以降で `POST_NOTIFICATIONS` を要求する、(4) 通知に `contentIntent` を付ける。
-- Worker は Android 12 以降ではフォアグラウンド昇格なしで動き、WorkManager の実行枠(約10分)に収まる範囲で処理する。Worker は UI と別の `AirkastClient` を使う。
+- Worker は Android 12 以降ではフォアグラウンド昇格が失敗しうるため、昇格に頼らず、WorkManager の実行枠(約10分)に収まる範囲で処理する。Worker は UI と別の `AirkastClient` を使う。
 
 ## 既知の課題
 
 - 認証トークンの有効期限切れ時の再認証は未実装。
 - 複数ダウンロードの優先度管理は未実装 (同時実行数の上限のみ)。
-- `HlsDownloadService` / `PlayerService` の自動テストが不足している。
-- 有効な音声トラックが見つからない場合、M4A変換は例外を出さず出力ファイルが生成されないが、`DownloadRunner` が出力ファイルの有無を確認するため、手動・自動のどちらもエラー扱いになる(完了扱いにはならない)。
-- AndroidManifest に `FileProvider` の宣言があるが、コードからは使用していない。
-- `airkast_app/LICENSE` はプレースホルダーのまま。
+- `HlsDownloadService` / `PlayerService` は、切り出した純粋なロジック(状態の整理・通知文言・エラーメッセージ・再生位置の保存条件など)と、Robolectric による生成・破棄の確認までは単体テスト済み。実際のダウンロード実行・再生・通知まで含む Service 全体の動作は未テスト。
 
 ## radiko側の仕様変更への対応
 

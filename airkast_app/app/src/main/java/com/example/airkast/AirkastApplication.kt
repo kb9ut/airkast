@@ -8,7 +8,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
-class AirkastApplication : Application() {
+// テストで onCreate (WorkManager の登録) を差し替えられるよう open にしている
+open class AirkastApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         // 自動DL が ON のお気に入りがあれば定期同期を登録、無ければ解除する

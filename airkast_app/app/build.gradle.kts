@@ -32,6 +32,7 @@ android {
     testOptions {
         unitTests {
             isReturnDefaultValues = true
+            isIncludeAndroidResources = true // Robolectric 用
         }
     }
     compileOptions {
