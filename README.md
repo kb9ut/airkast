@@ -15,7 +15,7 @@ radikoの認証はIPアドレスで位置を判定するため、日本国内の
 
 ## ドキュメント
 
-- [AGENTS.md](AGENTS.md) — 仕様、アーキテクチャ、認証・ダウンロード・再生のフロー、開発上の注意、既知の課題
+- [CLAUDE.md](CLAUDE.md) — 仕様、アーキテクチャ、認証・ダウンロード・再生のフロー、開発上の注意、既知の課題
 - [airkast_app/DESIGN.md](airkast_app/DESIGN.md) — UIデザインの方針
 
 ## 免責
