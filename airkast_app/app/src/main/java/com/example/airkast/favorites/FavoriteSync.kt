@@ -83,6 +83,9 @@ class FavoriteSync(
         for (program in candidates) {
             // ダウンロードは順番に長時間かかるので、実行直前に手動ダウンロードや保存済みを再確認する
             if (isDownloading(program) || isProgramDownloaded(downloadedFiles(), program)) continue
+            // 試行は開始前に数える。中断(キャンセル/プロセス終了)された試行も MAX_ATTEMPTS に含め、
+            // 長すぎる回が古い順の先頭で毎回後続をブロックし続けないようにする
+            repository.recordFailure(program.episodeKey)
             try {
                 downloader.download(program) { onProgress(program, it) }
                 repository.clearFailure(program.episodeKey)
@@ -91,7 +94,6 @@ class FavoriteSync(
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "自動ダウンロードに失敗: ${program.title}: ${e.message}")
-                repository.recordFailure(program.episodeKey)
                 failed += program
             }
         }

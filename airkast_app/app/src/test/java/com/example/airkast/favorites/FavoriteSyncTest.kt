@@ -182,7 +182,23 @@ class FavoriteSyncTest {
         val downloader = FakeDownloader { throw CancellationException("stopped") }
 
         assertFailsWith<CancellationException> { runBlocking { sync(guides, downloader).run() } }
-        assertTrue(repo.failures().isEmpty())
+        // 中断された試行も 1 回として数える
+        assertEquals(mapOf(prog().episodeKey to 1), repo.failures())
+    }
+
+    @Test
+    fun episodeInterruptedOnThreeConsecutiveRunsIsNotAttemptedOnTheFourth() {
+        val guides = FakeGuides { _, date -> if (date == "20260124") listOf(prog()) else emptyList() }
+        val interrupting = FakeDownloader { throw CancellationException("stopped") }
+
+        repeat(FavoriteMatcher.MAX_ATTEMPTS) {
+            assertFailsWith<CancellationException> { runBlocking { sync(guides, interrupting).run() } }
+        }
+        val fourth = FakeDownloader()
+        runBlocking { sync(guides, fourth).run() }
+
+        assertTrue(fourth.downloaded.isEmpty())
+        assertEquals(mapOf(prog().episodeKey to FavoriteMatcher.MAX_ATTEMPTS), repo.failures())
     }
 
     private val first = prog(start = "20260123220000", end = "20260123230000")
