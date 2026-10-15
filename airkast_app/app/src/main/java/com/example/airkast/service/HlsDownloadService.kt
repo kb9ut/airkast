@@ -59,6 +59,14 @@ class HlsDownloadService : Service() {
             return File(context.getExternalFilesDir("downloads"), fileName)
         }
 
+        /** ダウンロード中に生成される一時ファイルを含む、[finalFile] に関連する全ファイル。失敗/キャンセル時の掃除に使う。 */
+        fun partialFiles(finalFile: File): List<File> = listOf(
+            finalFile,
+            File(finalFile.absolutePath + ".adts"),
+            File(finalFile.absolutePath + ".tmp_mux"),
+            File(finalFile.absolutePath + ".raw"),
+        )
+
         data class ParsedFileName(
             val stationId: String,
             val title: String,
@@ -227,12 +235,7 @@ class HlsDownloadService : Service() {
 
         // 関連ファイルのクリーンアップ
         val finalFile = getDownloadFile(this, program)
-        listOf(
-            finalFile,
-            File(finalFile.absolutePath + ".adts"),
-            File(finalFile.absolutePath + ".tmp_mux"),
-            File(finalFile.absolutePath + ".raw"),
-        ).forEach { f -> if (f.exists()) f.delete() }
+        partialFiles(finalFile).forEach { f -> if (f.exists()) f.delete() }
 
         updateNotification()
         if (downloadJobs.isEmpty()) {

@@ -4,6 +4,7 @@ import com.example.airkast.service.HlsDownloadService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.io.File
 
 class HlsDownloadServiceTest {
 
@@ -39,5 +40,22 @@ class HlsDownloadServiceTest {
     @Test
     fun parseFileName_returnsNullForUnparsableName() {
         assertNull(HlsDownloadService.parseFileName("single.m4a"))
+    }
+
+    @Test
+    fun partialFiles_listsFinalFileAndItsIntermediates() {
+        val final = File("/tmp/downloads/TBS_Show_20260125090000_20260125100000.m4a")
+
+        val names = HlsDownloadService.partialFiles(final).map { it.name }
+
+        assertEquals(
+            listOf(
+                "TBS_Show_20260125090000_20260125100000.m4a",
+                "TBS_Show_20260125090000_20260125100000.m4a.adts",
+                "TBS_Show_20260125090000_20260125100000.m4a.tmp_mux",
+                "TBS_Show_20260125090000_20260125100000.m4a.raw",
+            ),
+            names,
+        )
     }
 }

@@ -10,7 +10,6 @@ import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
-import com.example.airkast.AirkastApplication
 import com.example.airkast.AirkastClient
 import com.example.airkast.AirkastProgram
 import com.example.airkast.DownloadRunner
@@ -22,6 +21,7 @@ private const val TAG = "FavoriteSyncWorker"
 private const val CHANNEL_ID = "FavoriteSyncChannel"
 private const val PROGRESS_NOTIFICATION_ID = 2
 private const val DONE_NOTIFICATION_BASE_ID = 1000
+private const val DONE_NOTIFICATION_TAG = "favorite_done"
 
 /**
  * 約 6 時間ごとに、お気に入り番組の新しい回を自動ダウンロードする。
@@ -38,7 +38,6 @@ class FavoriteSyncWorker(context: Context, params: WorkerParameters) : Coroutine
         val repository = FavoriteRepository(PrefsTextStorage(applicationContext))
         if (!repository.hasAutoDownload()) return Result.success()
 
-        val client = (applicationContext as AirkastApplication).airkastClient
         createNotificationChannel()
         try {
             setForeground(getForegroundInfo())
@@ -50,6 +49,16 @@ class FavoriteSyncWorker(context: Context, params: WorkerParameters) : Coroutine
             Log.w(TAG, "フォアグラウンドに昇格できませんでした。通常の実行枠で続行します: ${e.message}")
         }
 
+        // UI と共有の AirkastClient を使うと、再認証の途中で UI 側のトークンを壊しうるため、Worker 専用のクライアントを使う
+        val client = AirkastClient()
+        try {
+            return syncWith(client, repository)
+        } finally {
+            client.client.close()
+        }
+    }
+
+    private suspend fun syncWith(client: AirkastClient, repository: FavoriteRepository): Result {
         try {
             client.authenticate()
         } catch (e: CancellationException) {
@@ -66,14 +75,17 @@ class FavoriteSyncWorker(context: Context, params: WorkerParameters) : Coroutine
             downloadedFiles = { downloadedFiles() },
             isDownloading = { isDownloadingManually(it) },
         )
-        val report = sync.run { program, percent ->
-            notificationManager.notify(
-                PROGRESS_NOTIFICATION_ID,
-                progressNotification("${program.title} をダウンロード中", "$percent%"),
-            )
+        val report = try {
+            sync.run { program, percent ->
+                notificationManager.notify(
+                    PROGRESS_NOTIFICATION_ID,
+                    progressNotification("${program.title} をダウンロード中", "$percent%"),
+                )
+            }
+        } finally {
+            // キャンセルや例外で中断しても、進捗通知を残さない
+            notificationManager.cancel(PROGRESS_NOTIFICATION_ID)
         }
-
-        notificationManager.cancel(PROGRESS_NOTIFICATION_ID)
         report.downloaded.forEach { notifyDownloaded(it) }
         return if (report.allStationsFailed) Result.retry() else Result.success()
     }
@@ -98,7 +110,8 @@ class FavoriteSyncWorker(context: Context, params: WorkerParameters) : Coroutine
             .setAutoCancel(true)
             .build()
         val id = DONE_NOTIFICATION_BASE_ID + (program.id.hashCode() and 0xFFFF)
-        notificationManager.notify(id, notification)
+        // media3 の通知 ID(1001 など)と衝突しないよう、タグで名前空間を分ける
+        notificationManager.notify(DONE_NOTIFICATION_TAG, id, notification)
     }
 
     private fun foregroundInfo(title: String, text: String): ForegroundInfo {
@@ -143,7 +156,7 @@ internal class RunnerEpisodeDownloader(
         try {
             runner.run(program, outputFile, DownloadRunner.DEFAULT_CHUNK_SIZE_SECONDS, onProgress)
         } catch (e: Throwable) {
-            if (outputFile.exists()) outputFile.delete()
+            HlsDownloadService.partialFiles(outputFile).forEach { if (it.exists()) it.delete() }
             throw e
         }
     }
