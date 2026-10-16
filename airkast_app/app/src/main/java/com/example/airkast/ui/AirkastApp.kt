@@ -55,7 +55,6 @@ import androidx.compose.ui.unit.dp
 import com.example.airkast.MainViewModel
 import com.example.airkast.R
 import com.example.airkast.favorites.FavoritesViewModel
-import com.example.airkast.ui.components.AreaSelectionDialog
 import com.example.airkast.ui.components.DownloadChunkSizeDialog
 import com.example.airkast.ui.components.PlayerOverlay
 import com.example.airkast.ui.screens.DownloadsScreen
@@ -76,7 +75,6 @@ fun MainApp(
     onOpenTabHandled: () -> Unit,
 ) {
     var tabIndex by rememberSaveable { mutableStateOf(tabIndexForExtra(openTabRequest)) }
-    var showAreaDialog by remember { mutableStateOf(false) }
     var showChunkSizeDialog by remember { mutableStateOf(false) }
     var playerReservedHeight by remember { mutableStateOf(0.dp) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -141,7 +139,6 @@ fun MainApp(
                     },
                 ),
                 scrollBehavior = scrollBehavior,
-                onAreaClick = { showAreaDialog = true },
                 onDownloadSettingsClick = { showChunkSizeDialog = true },
                 onLicensesClick = {
                     context.startActivity(Intent(context, OssLicensesMenuActivity::class.java))
@@ -232,17 +229,6 @@ fun MainApp(
         }
     }
 
-    if (showAreaDialog) {
-        AreaSelectionDialog(
-            currentAreaId = viewModel.selectedAreaId.collectAsState().value,
-            onAreaSelected = {
-                viewModel.onAreaSelected(it)
-                showAreaDialog = false
-            },
-            onDismiss = { showAreaDialog = false },
-        )
-    }
-
     if (showChunkSizeDialog) {
         DownloadChunkSizeDialog(
             currentChunkSize = viewModel.downloadChunkSize.collectAsState().value,
@@ -257,7 +243,6 @@ fun MainApp(
 private fun AirkastTopBar(
     title: String,
     scrollBehavior: androidx.compose.material3.TopAppBarScrollBehavior,
-    onAreaClick: () -> Unit,
     onDownloadSettingsClick: () -> Unit,
     onLicensesClick: () -> Unit,
 ) {
@@ -285,13 +270,6 @@ private fun AirkastTopBar(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },
                 ) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.menu_area)) },
-                        onClick = {
-                            menuExpanded = false
-                            onAreaClick()
-                        },
-                    )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.menu_download_settings)) },
                         onClick = {

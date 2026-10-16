@@ -81,9 +81,6 @@ open class MainViewModel(
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
-    private val _selectedAreaId = MutableStateFlow("JP13") // Default to Tokyo Area ID
-    val selectedAreaId: StateFlow<String> = _selectedAreaId.asStateFlow()
-
     private val _mediaBrowserConnectionState = MutableStateFlow(MediaBrowserConnectionState.DISCONNECTED)
     val mediaBrowserConnectionState: StateFlow<MediaBrowserConnectionState> = _mediaBrowserConnectionState.asStateFlow()
 
@@ -462,9 +459,6 @@ open class MainViewModel(
                 val detectedAreaId = client.auth2(partialKey)
                 Log.d(TAG, "Step 3 完了: detectedAreaId=$detectedAreaId")
                 
-                // Update selected area with detected area
-                _selectedAreaId.value = detectedAreaId
-
                 // Step 4: getStations
                 Log.d(TAG, "Step 4: getStations 呼び出し中...")
                 val stations = client.getStations(detectedAreaId)
@@ -498,29 +492,6 @@ open class MainViewModel(
         _selectedStationId.value = stationId
         savePreferences()
         fetchProgramGuide()
-    }
-
-    /**
-     * ユーザーがエリアを変更したときに呼び出されます。
-     * @param areaId 選択されたエリアID（例: "JP13"）。
-     */
-    fun onAreaSelected(areaId: String) {
-        _selectedAreaId.value = areaId
-        _selectedStationId.value = null
-        _programGuideUiState.value = UiState.Idle
-        
-        // 新しいエリアの放送局リストを取得
-        viewModelScope.launch {
-            _stationUiState.value = UiState.Loading
-            try {
-                val stations = client.getStations(areaId)
-                _stationUiState.value = UiState.Success(stations)
-                _userMessage.emit("エリアを変更しました: $areaId (${stations.size}局)")
-            } catch (e: Exception) {
-                _stationUiState.value = UiState.Error(StationListException(e.message ?: "Unknown error", e))
-                _userMessage.emit("エラー: ${e.message}")
-            }
-        }
     }
 
     /**

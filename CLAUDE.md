@@ -27,7 +27,7 @@ cd airkast_app
 ## 機能
 
 - **UI:** Jetpack Compose + Material3。システム設定に追従するライト/ダーク、Android 12+ は Dynamic Color。ナビゲーションは「お気に入り」「番組を探す」「ダウンロード」の3つ。トップバーのメニューからエリア変更・ダウンロード分割サイズ設定・ライセンス表示を行う。デザインの方針は [`airkast_app/DESIGN.md`](airkast_app/DESIGN.md)。
-- **認証・エリア:** 起動時にPC版認証を実行し、IPアドレスからエリアを自動判定。手動変更も可能 (`AreaSelectionDialog` に定義した12エリア)。
+- **認証・エリア:** 起動時にPC版認証を実行し、IPアドレスからエリアを自動判定する。エリアの手動変更機能は無い(旧 `AreaSelectionDialog` は削除済み)。
 - **番組表:** 放送局を選択 → 過去7日間から日付を選択 → 時間帯フィルター (早朝 5-9 / 昼 9-17 / 夜 17-24 / 深夜 24-29)。アプリを開いたまま日付が変わった場合は日付リストを更新する (`MainViewModel.refreshDateIfChanged`)。選択した放送局・時間帯は `SharedPreferences` に保存される。
 - **ダウンロード:** 放送終了済みの番組のみ。`HlsDownloadService` (Foreground Service, `dataSync`) が実行し、通知に進捗を表示。同時実行は最大3件。分割サイズ (15秒 / 60秒(既定) / 5分 / 一括) を選べる。
 - **再生:** `PlayerService` (MediaLibraryService + ExoPlayer) でダウンロード済みファイルを再生。倍速 (0.5x〜2.0x)、スキップ (戻し: 60秒 / 30秒 / 15秒、送り: 60秒 / 2分 / 3分)、再生位置の自動保存・復元。ストリーミング再生 (`MainViewModel.playStream` → `PlayerCommands.PLAY_STREAM`) の実装もある。
